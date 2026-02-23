@@ -145,11 +145,29 @@ async def main():
         if ngcs_count == 0:
             print("  אין קישורי NGCSViewer בדף - מאבחן...")
             print(f"  URL נוכחי: {page.url}")
-            print(f"  כותרת דף: {await page.title()}")
 
-            # מחפשים רמזים לתוצאות/שגיאות
-            all_links = await page.locator("a").count()
-            print(f"  סה\"כ קישורים בדף: {all_links}")
+            # בדיקת iframes
+            frames = page.frames
+            print(f"  מספר frames בדף: {len(frames)}")
+            for idx, frame in enumerate(frames):
+                try:
+                    frame_ngcs = await frame.locator("a[href*='NGCSViewer']").count()
+                    frame_links = await frame.locator("a").count()
+                    print(f"  frame[{idx}] url={frame.url[:80]}  קישורים={frame_links}  NGCSViewer={frame_ngcs}")
+                    if frame_ngcs > 0:
+                        print(f"  *** נמצאו NGCSViewer ב-frame[{idx}]! ***")
+                except Exception as fe:
+                    print(f"  frame[{idx}] שגיאה: {fe}")
+
+            # כל ה-href בדף הראשי
+            all_hrefs = await page.evaluate("""
+                () => [...document.querySelectorAll('a[href]')]
+                      .map(a => a.getAttribute('href'))
+                      .filter(h => h && h.length > 1)
+            """)
+            print(f"  כל ה-href בדף ({len(all_hrefs)}):")
+            for h in all_hrefs:
+                print(f"    {h}")
 
             # מחפשים טקסט שמעיד על "אין תוצאות"
             body_text = await page.locator("body").inner_text()
@@ -158,12 +176,9 @@ async def main():
                 if kw in body_text:
                     print(f"  נמצא בדף: '{kw}'")
 
-            # לוקחים 500 תווים ראשונים מהגוף לאבחון
-            print(f"  תחילת תוכן הדף:\n{body_text[:500]}")
-
             # צילום מסך לאבחון
             screenshot_path = OUTPUT_DIR / "debug_screenshot.png"
-            await page.screenshot(path=str(screenshot_path))
+            await page.screenshot(path=str(screenshot_path), full_page=True)
             print(f"  צילום מסך נשמר: {screenshot_path}")
 
             await browser.close()
