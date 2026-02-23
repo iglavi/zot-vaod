@@ -6,9 +6,22 @@
 import asyncio
 import csv
 import re
+import sys
 import requests
 from pathlib import Path
 from playwright.async_api import async_playwright
+
+# === תיעוד לקובץ ===
+_LOG_PATH = Path(r"C:\Users\MPI-User\Desktop\nethamishpat\log.txt")
+_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_log = open(_LOG_PATH, "w", encoding="utf-8")
+
+class _Tee:
+    def write(self, m): sys.__stdout__.write(m); _log.write(m); _log.flush()
+    def flush(self): sys.__stdout__.flush()
+
+sys.stdout = _Tee()
+# ===================
 
 # ============================================================
 # הגדרות
@@ -320,3 +333,4 @@ async def main():
 
 
 asyncio.run(main())
+_log.close()
