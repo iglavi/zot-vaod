@@ -75,36 +75,18 @@ async def main():
         # --- שלב 3: חילוץ השורה הראשונה בלבד ---
         print("\n[3] מחפש את הטבלה...")
 
-        # נדפיס כמה טבלאות יש בדף
-        all_tables = await page.locator("table").all()
-        print(f"  נמצאו {len(all_tables)} טבלאות בדף")
+        # הגישה הנכונה: מוצאים קישור NGCSViewer ועולים ממנו לטבלה שמכילה אותו
+        ngcs_count = await page.locator("a[href*='NGCSViewer']").count()
+        print(f"  קישורי NGCSViewer בדף: {ngcs_count}")
 
-        # ננסה selectors שונים לטבלת התוצאות
-        table = None
-        for selector in [
-            "table[id*='GridView']",
-            "table[id*='grid']",
-            "table[id*='Grid']",
-            ".rgMasterTable",
-        ]:
-            el = page.locator(selector)
-            if await el.count() > 0:
-                table = el.first
-                print(f"  [OK] נמצאה טבלה: {selector}")
-                break
+        if ngcs_count == 0:
+            print("  אין קישורי NGCSViewer בדף - ייתכן שאין תוצאות, או שהדף לא נטען")
+            await browser.close()
+            return
 
-        if table is None:
-            print("  לא נמצאה טבלה ספציפית - משתמש בכל הטבלאות")
-            # נמצא את הטבלה הגדולה ביותר (הכי הרבה שורות)
-            best_table = None
-            best_count = 0
-            for i, t in enumerate(all_tables):
-                row_count = await t.locator("tr").count()
-                print(f"  טבלה {i}: {row_count} שורות")
-                if row_count > best_count:
-                    best_count = row_count
-                    best_table = t
-            table = best_table
+        # עולים בעץ ה-HTML מהקישור הראשון עד לטבלה שמכילה אותו
+        table = page.locator("a[href*='NGCSViewer']").first.locator("xpath=ancestor::table[1]")
+        print("  [OK] נמצאה טבלת תוצאות (דרך קישורי NGCSViewer)")
 
         # סופרים שורות
         rows = table.locator("tr")
