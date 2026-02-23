@@ -68,8 +68,19 @@ async def main():
         print(f"  בית משפט שנבחר: {court_name}")
 
         await page.locator("#ButtonsGroup1_btnLocate").click()
-        await page.wait_for_timeout(4000)
-        await dismiss_popup(page)
+
+        # ממתינים שהפופאפ "100 תוצאות" יופיע ואז סוגרים אותו
+        # הפופאפ הזה מופיע אחרי שהשרת מחזיר תוצאות - לכן timeout ארוך יותר
+        try:
+            btn = page.locator("button", has_text="אישור")
+            await btn.wait_for(state="visible", timeout=10000)
+            await btn.click()
+            await page.wait_for_timeout(1000)
+            print("  [OK] סגרתי פופאפ 100 תוצאות")
+        except Exception:
+            print("  לא הופיע פופאפ (פחות מ-100 תוצאות, או שנסגר כבר)")
+
+        await page.wait_for_timeout(1000)
         print("  [OK] עמוד תוצאות נטען")
 
         # --- שלב 3: חילוץ השורה הראשונה בלבד ---
