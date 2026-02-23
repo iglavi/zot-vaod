@@ -138,55 +138,27 @@ async def main():
         # --- שלב 3: חילוץ השורה הראשונה בלבד ---
         print("\n[3] מחפש את הטבלה...")
 
-        # הגישה הנכונה: מוצאים קישור NGCSViewer ועולים ממנו לטבלה שמכילה אותו
-        ngcs_count = await page.locator("a[href*='NGCSViewer']").count()
-        print(f"  קישורי NGCSViewer בדף: {ngcs_count}")
+        # הקישורים הם PostBack מסוג btnDocument
+        doc_links = page.locator("a[href*='btnDocument']")
+        doc_count = await doc_links.count()
+        print(f"  קישורי btnDocument בדף: {doc_count}")
 
-        if ngcs_count == 0:
-            print("  אין קישורי NGCSViewer בדף - מאבחן...")
-            print(f"  URL נוכחי: {page.url}")
-
-            # בדיקת iframes
-            frames = page.frames
-            print(f"  מספר frames בדף: {len(frames)}")
-            for idx, frame in enumerate(frames):
-                try:
-                    frame_ngcs = await frame.locator("a[href*='NGCSViewer']").count()
-                    frame_links = await frame.locator("a").count()
-                    print(f"  frame[{idx}] url={frame.url[:80]}  קישורים={frame_links}  NGCSViewer={frame_ngcs}")
-                    if frame_ngcs > 0:
-                        print(f"  *** נמצאו NGCSViewer ב-frame[{idx}]! ***")
-                except Exception as fe:
-                    print(f"  frame[{idx}] שגיאה: {fe}")
-
-            # כל ה-href בדף הראשי
-            all_hrefs = await page.evaluate("""
-                () => [...document.querySelectorAll('a[href]')]
-                      .map(a => a.getAttribute('href'))
-                      .filter(h => h && h.length > 1)
-            """)
-            print(f"  כל ה-href בדף ({len(all_hrefs)}):")
-            for h in all_hrefs:
-                print(f"    {h}")
-
-            # מחפשים טקסט שמעיד על "אין תוצאות"
+        if doc_count == 0:
+            print("  אין קישורי מסמכים בדף")
             body_text = await page.locator("body").inner_text()
             keywords = ["לא נמצאו", "אין תוצאות", "0 תוצאות", "No results"]
             for kw in keywords:
                 if kw in body_text:
                     print(f"  נמצא בדף: '{kw}'")
-
-            # צילום מסך לאבחון
             screenshot_path = OUTPUT_DIR / "debug_screenshot.png"
             await page.screenshot(path=str(screenshot_path), full_page=True)
             print(f"  צילום מסך נשמר: {screenshot_path}")
-
             await browser.close()
             return
 
         # עולים בעץ ה-HTML מהקישור הראשון עד לטבלה שמכילה אותו
-        table = page.locator("a[href*='NGCSViewer']").first.locator("xpath=ancestor::table[1]")
-        print("  [OK] נמצאה טבלת תוצאות (דרך קישורי NGCSViewer)")
+        table = doc_links.first.locator("xpath=ancestor::table[1]")
+        print("  [OK] נמצאה טבלת תוצאות (דרך קישורי btnDocument)")
 
         # סופרים שורות
         rows = table.locator("tr")
@@ -233,34 +205,46 @@ async def main():
         print(f"  שם תיק:    {case_name}")
         print(f"  סוג החלטה: {decision}")
 
-        # חיפוש קישור PDF
-        pdf_el = first_row.locator("a[href*='NGCSViewer']")
+        # חיפוש קישור המסמך בשורה הראשונה
+        pdf_el = first_row.locator("a[href*='btnDocument']")
         pdf_count = await pdf_el.count()
-        print(f"\n  קישורי NGCSViewer בשורה: {pdf_count}")
+        print(f"\n  קישורי btnDocument בשורה: {pdf_count}")
 
-        pdf_href = None
+        pb_href = None
         if pdf_count > 0:
-            pdf_href = await pdf_el.first.get_attribute("href")
-            print(f"  href: {pdf_href}")
+            pb_href = await pdf_el.first.get_attribute("href")
+            print(f"  href: {pb_href}")
         else:
-            print("  אין קישור PDF בשורה זו")
+            print("  אין קישור מסמך בשורה זו")
 
-        # --- שלב 5: הורדת ה-PDF ---
+        # --- שלב 5: הורדת ה-PDF דרך PostBack ---
         pdf_saved = "אין קישור"
 
-        if pdf_href:
-            print("\n[5] מנסה להוריד PDF...")
+        if pb_href:
+            print("\n[5] לוחץ על קישור המסמך ומחכה לחלון...")
 
-            # בניית URL מלא
-            if pdf_href.startswith("/"):
-                pdf_url = "https://www.court.gov.il" + pdf_href
-            elif not pdf_href.startswith("http"):
-                pdf_url = "https://www.court.gov.il/NGCS.Web.Site/" + pdf_href
+            # חילוץ הארגומנט: __doPostBack("btnDocument","caseId&docId&1")
+            pb_match = re.search(r'__doPostBack\("btnDocument","([^"]+)"\)', pb_href)
+            if pb_match:
+                pb_arg = pb_match.group(1)
+                parts = pb_arg.split("&")
+                case_id = parts[0] if len(parts) > 0 else ""
+                doc_id  = parts[1] if len(parts) > 1 else ""
+                print(f"  case_id={case_id}  doc_id={doc_id}")
             else:
-                pdf_url = pdf_href
-            print(f"  URL מלא: {pdf_url}")
+                case_id = doc_id = ""
+                print("  לא הצלחתי לחלץ case_id/doc_id")
 
             try:
+                # לחיצה על הקישור - מצפה לחלון חדש (popup)
+                async with context.expect_page() as popup_info:
+                    await pdf_el.first.click()
+                popup = await popup_info.value
+                await popup.wait_for_load_state("domcontentloaded")
+                viewer_url = popup.url
+                print(f"  URL שנפתח: {viewer_url}")
+
+                # הורדת ה-PDF מה-URL שנפתח
                 cookies = await context.cookies()
                 session = requests.Session()
                 for c in cookies:
@@ -275,12 +259,12 @@ async def main():
                     "Referer": "https://www.court.gov.il/",
                 }
 
-                resp = session.get(pdf_url, headers=headers, stream=True, timeout=30)
+                resp = session.get(viewer_url, headers=headers, stream=True, timeout=30)
                 content_type = resp.headers.get("content-type", "").lower()
                 first_bytes = resp.content[:8]
                 print(f"  HTTP status: {resp.status_code}")
                 print(f"  content-type: {content_type}")
-                print(f"  4 bytes ראשונים: {first_bytes}")
+                print(f"  8 bytes ראשונים: {first_bytes}")
 
                 court_dir = OUTPUT_DIR / safe_name(court_name)
                 court_dir.mkdir(parents=True, exist_ok=True)
@@ -294,26 +278,16 @@ async def main():
                     print(f"  [OK] PDF נשמר: {pdf_path}")
                 else:
                     print("  התשובה לא נראית כמו PDF")
-                    print("  מנסה לפתוח דף viewer...")
-
-                    # פתיחת viewer בדפדפן ובדיקה
-                    viewer_page = await context.new_page()
-                    await viewer_page.goto(pdf_url)
-                    await viewer_page.wait_for_timeout(3000)
-                    viewer_url = viewer_page.url
-                    print(f"  URL אחרי redirect: {viewer_url}")
-
-                    # מחפשים embed/iframe של PDF
-                    embed = viewer_page.locator("embed, iframe, object")
+                    embed = popup.locator("embed, iframe, object")
                     embed_count = await embed.count()
-                    print(f"  embed/iframe/object: {embed_count}")
+                    print(f"  embed/iframe/object בחלון: {embed_count}")
                     for i in range(embed_count):
                         src = await embed.nth(i).get_attribute("src") or ""
                         typ = await embed.nth(i).get_attribute("type") or ""
-                        print(f"    [{i}] src={src[:80]}  type={typ}")
-
-                    await viewer_page.close()
+                        print(f"    [{i}] src={src[:100]}  type={typ}")
                     pdf_saved = "שגיאה - ראה פלט"
+
+                await popup.close()
 
             except Exception as e:
                 print(f"  שגיאה: {e}")
