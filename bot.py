@@ -68,17 +68,56 @@ async def main():
         print(f"  בית משפט שנבחר: {court_name}")
 
         await page.locator("#ButtonsGroup1_btnLocate").click()
+        await page.wait_for_timeout(3000)  # ממתינים שהדף ייטען
 
-        # ממתינים שהפופאפ "100 תוצאות" יופיע ואז סוגרים אותו
-        # הפופאפ הזה מופיע אחרי שהשרת מחזיר תוצאות - לכן timeout ארוך יותר
-        try:
-            btn = page.locator("button", has_text="אישור")
-            await btn.wait_for(state="visible", timeout=10000)
-            await btn.click()
-            await page.wait_for_timeout(1000)
-            print("  [OK] סגרתי פופאפ 100 תוצאות")
-        except Exception:
-            print("  לא הופיע פופאפ (פחות מ-100 תוצאות, או שנסגר כבר)")
+        # סגירת פופאפ "100 תוצאות" - ניסיון עם מספר שיטות
+        # (הפופאפ בעמוד התוצאות עשוי להיות בנוי שונה מהפופאפ בדף הבית)
+        dismissed = False
+
+        # שיטה 1: button עם טקסט אישור (כמו בדף הבית)
+        if not dismissed:
+            try:
+                btn = page.locator("button", has_text="אישור")
+                if await btn.count() > 0:
+                    await btn.first.click()
+                    dismissed = True
+                    print("  [OK] סגרתי פופאפ (button)")
+            except Exception:
+                pass
+
+        # שיטה 2: input עם value=אישור (סוג אחר של כפתור ב-ASP.NET)
+        if not dismissed:
+            try:
+                btn = page.locator("input[value='אישור']")
+                if await btn.count() > 0:
+                    await btn.first.click()
+                    dismissed = True
+                    print("  [OK] סגרתי פופאפ (input[value])")
+            except Exception:
+                pass
+
+        # שיטה 3: JavaScript - מחפש כל כפתור עם טקסט/value אישור ולוחץ עליו
+        if not dismissed:
+            try:
+                result = await page.evaluate("""
+                    () => {
+                        const all = [...document.querySelectorAll('button, input[type=button], input[type=submit]')];
+                        const found = all.find(el =>
+                            (el.textContent || '').includes('אישור') ||
+                            (el.value || '').includes('אישור')
+                        );
+                        if (found) { found.click(); return true; }
+                        return false;
+                    }
+                """)
+                if result:
+                    dismissed = True
+                    print("  [OK] סגרתי פופאפ (JavaScript)")
+            except Exception:
+                pass
+
+        if not dismissed:
+            print("  לא נמצא פופאפ לסגירה (אולי אין כזה)")
 
         await page.wait_for_timeout(1000)
         print("  [OK] עמוד תוצאות נטען")
