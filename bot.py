@@ -130,7 +130,29 @@ async def main():
         print(f"  קישורי NGCSViewer בדף: {ngcs_count}")
 
         if ngcs_count == 0:
-            print("  אין קישורי NGCSViewer בדף - ייתכן שאין תוצאות, או שהדף לא נטען")
+            print("  אין קישורי NGCSViewer בדף - מאבחן...")
+            print(f"  URL נוכחי: {page.url}")
+            print(f"  כותרת דף: {await page.title()}")
+
+            # מחפשים רמזים לתוצאות/שגיאות
+            all_links = await page.locator("a").count()
+            print(f"  סה\"כ קישורים בדף: {all_links}")
+
+            # מחפשים טקסט שמעיד על "אין תוצאות"
+            body_text = await page.locator("body").inner_text()
+            keywords = ["לא נמצאו", "אין תוצאות", "0 תוצאות", "No results"]
+            for kw in keywords:
+                if kw in body_text:
+                    print(f"  נמצא בדף: '{kw}'")
+
+            # לוקחים 500 תווים ראשונים מהגוף לאבחון
+            print(f"  תחילת תוכן הדף:\n{body_text[:500]}")
+
+            # צילום מסך לאבחון
+            screenshot_path = OUTPUT_DIR / "debug_screenshot.png"
+            await page.screenshot(path=str(screenshot_path))
+            print(f"  צילום מסך נשמר: {screenshot_path}")
+
             await browser.close()
             return
 
