@@ -156,26 +156,42 @@ async def main():
             await browser.close()
             return
 
-        # עולים בעץ ה-HTML מהקישור הראשון עד לטבלה שמכילה אותו
-        table = doc_links.first.locator("xpath=ancestor::table[1]")
-        print("  [OK] נמצאה טבלת תוצאות (דרך קישורי btnDocument)")
+        # עולים בעץ ה-HTML - הקישור בטבלה פנימית, מנסים table[2] ואחר-כך table[1]
+        table = None
+        for level in (2, 3, 1):
+            candidate = doc_links.first.locator(f"xpath=ancestor::table[{level}]")
+            try:
+                count = await candidate.locator("tr").count()
+            except Exception:
+                count = 0
+            print(f"  ancestor::table[{level}] → {count} שורות")
+            if count > 1:
+                table = candidate
+                print(f"  [OK] נמצאה טבלת תוצאות (ancestor::table[{level}])")
+                break
 
-        # סופרים שורות
-        rows = table.locator("tr")
-        total_rows = await rows.count()
-        print(f"  סה\"כ שורות בטבלה: {total_rows}")
-
-        if total_rows < 2:
-            print("  אין מספיק שורות - אולי הטבלה לא נטענה?")
+        if table is None:
+            print("  לא מצאתי טבלה עם יותר משורה אחת - מוותר")
             await browser.close()
             return
 
-        # --- לוקחים רק שורה 1 (index 1 = אחרי הכותרת) ---
+        # שורות שמכילות ישירות קישורי btnDocument (שורות נתונים, לא כותרת)
+        data_rows = table.locator("tr:has(a[href*='btnDocument'])")
+        total_data_rows = await data_rows.count()
+        print(f"  שורות נתונים: {total_data_rows}")
+
+        if total_data_rows == 0:
+            print("  אין שורות נתונים - מוותר")
+            await browser.close()
+            return
+
+        # --- לוקחים שורת נתונים ראשונה ---
         print("\n[4] חולץ שורה ראשונה...")
-        first_row = rows.nth(1)
-        cells = first_row.locator("td")
+        first_row = data_rows.first
+        # child::td בלבד (לא td מתוך טבלאות מקוננות)
+        cells = first_row.locator("xpath=child::td")
         num_cells = await cells.count()
-        print(f"  מספר תאים בשורה: {num_cells}")
+        print(f"  מספר תאים ישירים בשורה: {num_cells}")
 
         # מדפיסים את כל התאים כדי לדעת מה בכל עמודה
         print("  תוכן כל תא:")
