@@ -1,14 +1,12 @@
 """
 scrape_day.py
-Phase 1 — יום בדיקה מלא: 2026-01-01
-
-לולאה על כל הערכאות / שופטים / סוגי החלטה.
-מוריד Word docs ושומר metadata.csv מרכזי.
-תומך בהמשכה אחרי קריסה (progress.json).
+סקראפר החלטות בית משפט — יום אחד, כל הערכאות וסוגי החלטה.
+הגדרות: config.json | מטמון ערכאות: data.json | התקדמות: progress.json
 """
 
 import asyncio
 import csv
+import ctypes
 import json
 import random
 import re
@@ -18,21 +16,26 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-# ── הגדרות ────────────────────────────────────────────────
-TARGET_DATE  = "2026-01-01"
-TARGET_DAY   = "1"
-TARGET_MONTH = "0"       # 0 = ינואר
-TARGET_YEAR  = "2026"
+# ── קריאת הגדרות ──────────────────────────────────────────
+_cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
 
-OUTPUT_DIR    = Path(r"C:\Users\MPI-User\Desktop\nethamishpat")
+TARGET_DATE  = _cfg["target_date"]
+_y, _m, _d  = TARGET_DATE.split("-")
+TARGET_DAY   = str(int(_d))
+TARGET_MONTH = str(int(_m) - 1)   # 0-based לחודש ב-datepicker
+TARGET_YEAR  = _y
+
+OUTPUT_DIR    = Path(_cfg["output_dir"])
 DATE_DIR      = OUTPUT_DIR / TARGET_DATE
 MASTER_CSV    = OUTPUT_DIR / "metadata.csv"
 PROGRESS_FILE = OUTPUT_DIR / "progress.json"
+DATA_FILE     = OUTPUT_DIR / "data.json"
 LOG_FILE      = OUTPUT_DIR / "log.txt"
 
-HEADLESS = False   # False = רואים את הדפדפן
-
-DECISION_TYPES = ["פסק דין", "גזר דין", "הכרעת דין"]
+HEADLESS       = _cfg.get("headless", False)
+DECISION_TYPES = _cfg.get("decision_types", ["פסק דין", "גזר דין", "הכרעת דין"])
+BATCH_SIZE     = _cfg.get("batch_size", 30)        # מנוחה אחרי כל N הורדות
+BATCH_REST_SEC = _cfg.get("batch_rest_seconds", 45)
 
 MASTER_COLS = [
     "תאריך", "בית משפט", "הליך", "סוג תיק", "סוג עניין",
@@ -40,9 +43,17 @@ MASTER_COLS = [
 ]
 
 SITE_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
-# ─────────────────────────────────────────────────────────
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+]
+
+# ─────────────────────────────────────────────────────────
 _log_fh = None
+_download_count = 0   # מונה להפעלת מנוחות
 
 
 def log(msg: str):
@@ -52,6 +63,22 @@ def log(msg: str):
     if _log_fh:
         _log_fh.write(line + "\n")
         _log_fh.flush()
+
+
+# ── מניעת שינה (Windows) ─────────────────────────────────
+
+def prevent_sleep():
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    except Exception:
+        pass
+
+
+def allow_sleep():
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)  # ES_CONTINUOUS
+    except Exception:
+        pass
 
 
 # ── progress ─────────────────────────────────────────────
@@ -76,7 +103,8 @@ def progress_key(*parts) -> str:
 
 # ── ניווט ────────────────────────────────────────────────
 
-async def dismiss_popup(page, timeout=3000):
+async def dismiss_popup(page):
+    """סוגר popup כללי עם כפתור אישור."""
     for locator in [
         page.locator("button", has_text="אישור"),
         page.locator("input[value='אישור']"),
@@ -101,15 +129,32 @@ async def dismiss_popup(page, timeout=3000):
         pass
 
 
+async def dismiss_ndc_popup(page):
+    """סוגר popup 'לא נבחרו מסמכים להורדה' — מונע חסימת לחיצות עתידיות."""
+    try:
+        overlay = page.locator("#lean_overlay_MessageLS_NoDocumentChosenToDownload")
+        if await overlay.count() > 0:
+            await overlay.click(force=True, timeout=2000)
+            await page.wait_for_timeout(500)
+            return
+    except Exception:
+        pass
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
 async def navigate_to_search(page):
-    """מנווט לדף החיפוש לפי פרמטרים (מהדף הראשי)."""
+    """מנווט לדף החיפוש לפי פרמטרים."""
     await page.goto(SITE_URL)
-    await page.wait_for_timeout(4000)
+    await page.wait_for_timeout(random.uniform(3500, 5000))
     await dismiss_popup(page)
     await page.get_by_text("איתור החלטות").first.click()
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(random.uniform(1500, 2500))
     await page.get_by_text("איתור לפי פרמטרים").first.click()
-    await page.wait_for_timeout(1500)
+    await page.wait_for_timeout(random.uniform(1000, 2000))
 
 
 # ── פילטרים ──────────────────────────────────────────────
@@ -130,12 +175,10 @@ async def set_date(page, field_id: str):
     await page.wait_for_timeout(400)
 
 
-async def do_search(page, court_idx: int, dt_name: str,
-                    proc_idx: int | None = None):
+async def do_search(page, court_idx: int, dt_name: str, proc_idx: int | None = None):
     """ממלא את טופס החיפוש ולוחץ חפש. שופט = כל השופטים (index 0)."""
     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
     await page.wait_for_timeout(1500)
-    # לא מפלטרים לפי שופט — index 0 = "כל השופטים" (ברירת מחדל)
     await page.locator("#LocateByParameters1_ddlDecisionType").select_option(label=dt_name)
     if proc_idx is not None:
         await page.locator("#LocateByParameters1_ddlSelectProceeding").select_option(index=proc_idx)
@@ -169,7 +212,7 @@ async def get_result_count(page) -> tuple[int, bool]:
 
 
 async def export_page_csv(page) -> list[dict]:
-    """מייצא CSV מ-AG-Grid עבור הדף הנוכחי. מחזיר רשימת שורות."""
+    """מייצא CSV מ-AG-Grid. מחזיר רשימת שורות."""
     try:
         tmp = Path(tempfile.mktemp(suffix=".csv"))
         async with page.expect_download(timeout=20000) as dl_info:
@@ -201,38 +244,8 @@ async def export_page_csv(page) -> list[dict]:
         return []
 
 
-async def discover_pagination(page):
-    """מגלה ומדפיס כל כפתורי ניווט עמודים שנמצאו בדף."""
-    candidates = [
-        '[ref="btNext"]',              '.ag-paging-panel [ref="btNext"]',
-        'button:has-text("לדף הבא")', 'a:has-text("לדף הבא")',
-        'button:has-text("הבא")',      'a:has-text("הבא")',
-        '[id*="btnNext"]',             '[id*="NextPage"]',
-        '[id*="next_page"]',           '.next-page',
-        '.pagination-next',            'li.next a',
-        'a[title="הבא"]',             'input[value="הבא"]',
-    ]
-    found = []
-    for sel in candidates:
-        try:
-            el = page.locator(sel)
-            if await el.count() > 0:
-                text = (await el.first.inner_text()).strip()
-                visible = await el.first.is_visible()
-                found.append(f"    {sel!r}  visible={visible}  text={text!r}")
-        except Exception:
-            pass
-    if found:
-        log("  [DISCOVERY] כפתורי ניווט עמודים:")
-        for f in found:
-            log(f)
-    else:
-        log("  [DISCOVERY] לא נמצאו כפתורי ניווט עמודים")
-
-
 async def go_next_page(page) -> bool:
-    """עובר לדף הבא של AG-Grid. מחזיר True אם עבר, False אם אין."""
-    # שיטה ראשונה: כפתור AG-Grid הפנימי [ref="btNext"] דרך JavaScript
+    """עובר לדף הבא של AG-Grid. מחזיר True אם עבר."""
     try:
         moved = await page.evaluate("""
             () => {
@@ -249,13 +262,7 @@ async def go_next_page(page) -> bool:
             return True
     except Exception:
         pass
-    # שיטה שנייה: סלקטורים של AG-Grid
-    for sel in [
-        '[ref="btNext"]:not(.ag-disabled)',
-        '.ag-paging-panel [ref="btNext"]',
-        '[id*="btnNext"]:not([disabled])',
-        '[id*="NextPage"]:not([disabled])',
-    ]:
+    for sel in ['[ref="btNext"]:not(.ag-disabled)', '[id*="btnNext"]:not([disabled])']:
         try:
             el = page.locator(sel).first
             if await el.is_visible() and await el.is_enabled():
@@ -276,33 +283,45 @@ def safe_name(text: str, max_len: int = 60) -> str:
 
 
 async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | None:
-    """
-    מוריד Word doc עבור שורה row_idx (0-based).
-    לוחץ checkbox פיזית → #btnDownloadWordDocs → שומר.
-    מחזיר נתיב שנשמר, או None אם נכשל.
-    """
+    global _download_count
     DATE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # דילוג אם קיים
     safe_cn = safe_name(case_number)
     existing = list(DATE_DIR.glob(f"{safe_cn}_*.docx"))
     if existing:
         log(f"      קיים: {existing[0].name} — מדלג")
         return existing[0]
 
-    # לחיצה פיזית על checkbox
+    # סגירת popup אם נשאר פתוח מניסיון קודם
+    await dismiss_ndc_popup(page)
+
+    # גלילה לשורה — AG-Grid מסתיר שורות מחוץ לתצוגה (virtual DOM)
     try:
-        # גלילה לשורה תחילה (AG-Grid מסתיר שורות מחוץ לתצוגה)
         await page.evaluate(f"""
             () => {{
                 const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
-                if (row) row.scrollIntoView({{block: 'center', behavior: 'instant'}});
+                if (row) {{
+                    row.scrollIntoView({{block: 'center', behavior: 'instant'}});
+                }} else {{
+                    // השורה לא קיימת ב-DOM — גולל את ה-viewport ישירות
+                    const agBody = document.querySelector('.ag-body-viewport');
+                    if (agBody) {{
+                        const anyRow = document.querySelector('.ag-row');
+                        const rowH = anyRow ? (anyRow.offsetHeight || 42) : 42;
+                        agBody.scrollTop = Math.max(0, {row_idx} * rowH - agBody.clientHeight / 2);
+                    }}
+                }}
             }}
         """)
-        await page.wait_for_timeout(200)
+        await page.wait_for_timeout(400)   # מחכים ל-DOM להתעדכן
+    except Exception:
+        pass
+
+    # מציאת checkbox לפי row-index של AG-Grid
+    pos = None
+    try:
         pos = await page.evaluate(f"""
             () => {{
-                // שיטה ראשונה: לפי row-index של AG-Grid
                 const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
                 if (row) {{
                     const cb = row.querySelector('input[type=checkbox]');
@@ -312,9 +331,8 @@ async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | 
                             return {{x: r.left + r.width / 2, y: r.top + r.height / 2}};
                     }}
                 }}
-                // fallback: לפי מיקום בין כל ה-checkboxes הגלויים
-                const allCbs = [...document.querySelectorAll('input[type=checkbox]')];
-                const dataCbs = allCbs.filter(cb =>
+                // fallback: לפי מיקום בין checkboxes גלויים
+                const dataCbs = [...document.querySelectorAll('input[type=checkbox]')].filter(cb =>
                     cb.offsetParent !== null &&
                     !cb.parentElement?.parentElement?.className.includes('ag-header-select-all')
                 );
@@ -325,14 +343,15 @@ async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | 
                 return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
             }}
         """)
-        if not pos:
-            log(f"      אין checkbox לשורה {row_idx}")
-            return None
-        await page.mouse.click(pos["x"], pos["y"])
-        await page.wait_for_timeout(500)
     except Exception as e:
         log(f"      שגיאת checkbox: {e}")
+
+    if not pos:
+        log(f"      אין checkbox לשורה {row_idx}")
         return None
+
+    await page.mouse.click(pos["x"], pos["y"])
+    await page.wait_for_timeout(500)
 
     # הורדת Word
     save_path = None
@@ -350,10 +369,12 @@ async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | 
         dl = await dl_info.value
         await dl.save_as(str(save_path))
         log(f"      [OK] {fname}")
+        _download_count += 1
 
     except Exception as e:
         log(f"      שגיאת הורדה: {e}")
         save_path = None
+        await dismiss_ndc_popup(page)   # חיוני — popup חוסם לחיצות עתידיות
     finally:
         try:
             page.remove_listener("dialog", handle_dialog)
@@ -361,12 +382,11 @@ async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | 
             pass
 
     # ביטול selection
-    if pos:
-        try:
-            await page.mouse.click(pos["x"], pos["y"])
-            await page.wait_for_timeout(300)
-        except Exception:
-            pass
+    try:
+        await page.mouse.click(pos["x"], pos["y"])
+        await page.wait_for_timeout(300)
+    except Exception:
+        pass
 
     return save_path
 
@@ -384,35 +404,22 @@ def append_to_master_csv(rows: list[dict]):
         writer.writerows(rows)
 
 
-# ── עיבוד תוצאות (כולל pagination) ──────────────────────
+# ── עיבוד תוצאות ──────────────────────────────────────────
 
 async def process_results(page):
-    """
-    מעבד את כל דפי התוצאות:
-    - מייצא CSV לכל דף
-    - מוריד Word לכל שורה
-    - עובר לדף הבא עד שנגמר
-    """
+    global _download_count
     page_num = 1
-    pagination_discovered = False
-    first_case_of_page1 = None   # לזיהוי דף כפול (pagination שחוזרת להתחלה)
+    first_case_of_page1 = None
 
     while True:
         log(f"    דף תוצאות {page_num}")
 
-        # גילוי pagination בדף הראשון
-        if page_num == 1 and not pagination_discovered:
-            await discover_pagination(page)
-            pagination_discovered = True
-
         rows = await export_page_csv(page)
         if not rows:
-            count, _ = await get_result_count(page)
-            if count == 0:
-                log("    אין תוצאות בדף")
+            log("    אין תוצאות בדף")
             break
 
-        # בדיקת דף כפול — אם הדף החדש מתחיל באותה שורה כמו דף 1, עצור
+        # זיהוי דף כפול (pagination שחוזרת להתחלה)
         first_case = rows[0].get("מספר תיק", "").strip()
         if page_num == 1:
             first_case_of_page1 = first_case
@@ -433,6 +440,11 @@ async def process_results(page):
             master_row["file_path"] = str(save_path) if save_path else ""
             master_rows.append(master_row)
 
+            # מנוחת batch אחרי כל BATCH_SIZE הורדות מוצלחות
+            if _download_count > 0 and _download_count % BATCH_SIZE == 0:
+                log(f"    [מנוחה] {_download_count} הורדות — מנוחה {BATCH_REST_SEC}ש'...")
+                await asyncio.sleep(BATCH_REST_SEC)
+
         append_to_master_csv(master_rows)
 
         has_next = await go_next_page(page)
@@ -448,6 +460,8 @@ async def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     DATE_DIR.mkdir(parents=True, exist_ok=True)
 
+    prevent_sleep()
+
     _log_fh = open(LOG_FILE, "a", encoding="utf-8")
     log("=" * 60)
     log(f"מתחיל ריצה — תאריך: {TARGET_DATE}")
@@ -455,30 +469,46 @@ async def main():
     done = load_progress()
     log(f"התקדמות קיימת: {len(done)} שילובים הושלמו")
 
+    ua = random.choice(USER_AGENTS)
+    log(f"User-Agent: {ua[:60]}...")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=HEADLESS)
-        context = await browser.new_context(accept_downloads=True)
+        context = await browser.new_context(
+            accept_downloads=True,
+            user_agent=ua,
+        )
         page = await context.new_page()
 
         try:
-            # קריאת מספר ערכאות (פעם אחת)
-            await navigate_to_search(page)
-            court_options = await page.locator(
-                "#LocateByParameters1_ddlSelectCourt option"
-            ).all()
-            num_courts = len(court_options)
-            log(f"סה\"כ ערכאות: {num_courts - 1}  (index 1..{num_courts - 1})")
+            # קריאת רשימת ערכאות — עם מטמון ב-data.json
+            court_names = None
+            if DATA_FILE.exists():
+                cached = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+                court_names = cached.get("court_names")
+                if court_names:
+                    log(f"ערכאות מהמטמון: {len(court_names) - 1}")
 
-            # טעינת שמות ערכאות מראש
-            court_names = []
-            for opt in court_options:
-                court_names.append((await opt.inner_text()).strip())
+            if not court_names:
+                await navigate_to_search(page)
+                court_opts = await page.locator(
+                    "#LocateByParameters1_ddlSelectCourt option"
+                ).all()
+                court_names = [(await opt.inner_text()).strip() for opt in court_opts]
+                DATA_FILE.write_text(
+                    json.dumps({"court_names": court_names}, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                log(f"נשמר מטמון ערכאות → data.json  ({len(court_names) - 1} ערכאות)")
+
+            num_courts = len(court_names)
+            log(f"סה\"כ ערכאות: {num_courts - 1}  (index 1..{num_courts - 1})")
 
             for dt_name in DECISION_TYPES:
                 log(f"\n{'=' * 50}")
                 log(f"סוג החלטה: {dt_name}")
 
-                for court_idx in range(1, num_courts):  # 0 = "כל הערכאות"
+                for court_idx in range(1, num_courts):
                     court_name = court_names[court_idx]
                     key = progress_key(dt_name, court_idx)
 
@@ -501,27 +531,6 @@ async def main():
                     save_progress(done)
                     await asyncio.sleep(random.uniform(1, 3))
 
-                # ── קוד פילטור לפי שופט — שמור לשימוש עתידי (טווחי תאריך רחבים) ──────
-                # for court_idx in range(1, num_courts):
-                #     await navigate_to_search(page)
-                #     court_name = court_names[court_idx]
-                #     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
-                #     await page.wait_for_timeout(3000)
-                #     judge_options = await page.locator("#LocateByParameters1_ddlJudgeName option").all()
-                #     judge_names = [(await opt.inner_text()).strip() for opt in judge_options]
-                #     for judge_idx in range(1, len(judge_names)):
-                #         judge_name = judge_names[judge_idx]
-                #         key = progress_key(dt_name, court_idx, judge_idx)
-                #         if key in done:
-                #             continue
-                #         await navigate_to_search(page)
-                #         await do_search(page, court_idx, dt_name)  # להוסיף judge_idx בחתימה
-                #         count, is_capped = await get_result_count(page)
-                #         if count > 0:
-                #             await process_results(page)
-                #         done.add(key); save_progress(done)
-                # ─────────────────────────────────────────────────────────────────────
-
         except KeyboardInterrupt:
             log("\nנעצר על ידי המשתמש (Ctrl+C)")
         except Exception as e:
@@ -530,6 +539,7 @@ async def main():
             log(traceback.format_exc())
         finally:
             save_progress(done)
+            allow_sleep()
             try:
                 await browser.close()
             except Exception:

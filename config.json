@@ -1,0 +1,8 @@
+{
+  "target_date": "2026-01-01",
+  "output_dir": "C:\\Users\\MPI-User\\Desktop\\nethamishpat",
+  "headless": false,
+  "decision_types": ["פסק דין", "גזר דין", "הכרעת דין"],
+  "batch_size": 30,
+  "batch_rest_seconds": 45
+}
