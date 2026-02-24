@@ -425,6 +425,11 @@ async def main():
             num_courts = len(court_options)
             log(f"סה\"כ ערכאות: {num_courts - 1}  (index 1..{num_courts - 1})")
 
+            # טעינת שמות ערכאות מראש
+            court_names = []
+            for opt in court_options:
+                court_names.append((await opt.inner_text()).strip())
+
             for dt_name in DECISION_TYPES:
                 log(f"\n{'=' * 50}")
                 log(f"סוג החלטה: {dt_name}")
@@ -432,7 +437,7 @@ async def main():
                 for court_idx in range(1, num_courts):  # 0 = "כל הערכאות"
                     # ניווט לטופס + בחירת ערכאה לטעינת רשימת שופטים
                     await navigate_to_search(page)
-                    court_name = (await court_options[court_idx].inner_text()).strip()
+                    court_name = court_names[court_idx]
                     log(f"\n  ערכאה {court_idx}/{num_courts - 1}: {court_name}")
 
                     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(
@@ -446,8 +451,13 @@ async def main():
                     num_judges = len(judge_options)
                     log(f"  שופטים: {num_judges - 1}")
 
+                    # טעינת שמות מראש — הלוקייטורים מתיישנים אחרי ניווט לדף תוצאות
+                    judge_names = []
+                    for opt in judge_options:
+                        judge_names.append((await opt.inner_text()).strip())
+
                     for judge_idx in range(1, num_judges):  # 0 = "כל השופטים"
-                        judge_name = (await judge_options[judge_idx].inner_text()).strip()
+                        judge_name = judge_names[judge_idx]
                         key = progress_key(dt_name, court_idx, judge_idx)
 
                         if key in done:
