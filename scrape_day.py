@@ -130,12 +130,12 @@ async def set_date(page, field_id: str):
     await page.wait_for_timeout(400)
 
 
-async def do_search(page, court_idx: int, judge_idx: int, dt_name: str,
+async def do_search(page, court_idx: int, dt_name: str,
                     proc_idx: int | None = None):
-    """ממלא את טופס החיפוש ולוחץ חפש."""
+    """ממלא את טופס החיפוש ולוחץ חפש. שופט = כל השופטים (index 0)."""
     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
-    await page.wait_for_timeout(3000)   # רשימת שופטים נטענת דינמית
-    await page.locator("#LocateByParameters1_ddlJudgeName").select_option(index=judge_idx)
+    await page.wait_for_timeout(1500)
+    # לא מפלטרים לפי שופט — index 0 = "כל השופטים" (ברירת מחדל)
     await page.locator("#LocateByParameters1_ddlDecisionType").select_option(label=dt_name)
     if proc_idx is not None:
         await page.locator("#LocateByParameters1_ddlSelectProceeding").select_option(index=proc_idx)
@@ -435,89 +435,48 @@ async def main():
                 log(f"סוג החלטה: {dt_name}")
 
                 for court_idx in range(1, num_courts):  # 0 = "כל הערכאות"
-                    # ניווט לטופס + בחירת ערכאה לטעינת רשימת שופטים
-                    await navigate_to_search(page)
                     court_name = court_names[court_idx]
+                    key = progress_key(dt_name, court_idx)
+
+                    if key in done:
+                        log(f"  ערכאה {court_idx}/{num_courts - 1}: {court_name} — כבר הושלם")
+                        continue
+
                     log(f"\n  ערכאה {court_idx}/{num_courts - 1}: {court_name}")
 
-                    await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(
-                        index=court_idx
-                    )
-                    await page.wait_for_timeout(3000)
+                    await navigate_to_search(page)
+                    await do_search(page, court_idx, dt_name)
 
-                    judge_options = await page.locator(
-                        "#LocateByParameters1_ddlJudgeName option"
-                    ).all()
-                    num_judges = len(judge_options)
-                    log(f"  שופטים: {num_judges - 1}")
+                    count, is_capped = await get_result_count(page)
+                    log(f"  תוצאות: {count}{' ← מוגבל ל-100!' if is_capped else ''}")
 
-                    # טעינת שמות מראש — הלוקייטורים מתיישנים אחרי ניווט לדף תוצאות
-                    judge_names = []
-                    for opt in judge_options:
-                        judge_names.append((await opt.inner_text()).strip())
+                    if count > 0:
+                        await process_results(page)
 
-                    for judge_idx in range(1, num_judges):  # 0 = "כל השופטים"
-                        judge_name = judge_names[judge_idx]
-                        key = progress_key(dt_name, court_idx, judge_idx)
+                    done.add(key)
+                    save_progress(done)
+                    await asyncio.sleep(random.uniform(1, 3))
 
-                        if key in done:
-                            continue
-
-                        log(f"    שופט {judge_idx}/{num_judges - 1}: {judge_name}")
-
-                        # חיפוש
-                        await navigate_to_search(page)
-                        await do_search(page, court_idx, judge_idx, dt_name)
-
-                        count, is_capped = await get_result_count(page)
-                        log(f"    תוצאות: {count}{' ← מוגבל ל-100!' if is_capped else ''}")
-
-                        if count == 0:
-                            done.add(key)
-                            save_progress(done)
-                            await asyncio.sleep(random.uniform(1, 2))
-                            continue
-
-                        if is_capped:
-                            # מוסיפים פילטר סוג הליך
-                            log("    מוסיף פילטר הליך...")
-                            await navigate_to_search(page)
-                            proc_options = await page.locator(
-                                "#LocateByParameters1_ddlSelectProceeding option"
-                            ).all()
-                            num_procs = len(proc_options)
-
-                            for proc_idx in range(1, num_procs):
-                                proc_name = (await proc_options[proc_idx].inner_text()).strip()
-                                proc_key = progress_key(dt_name, court_idx, judge_idx, proc_idx)
-
-                                if proc_key in done:
-                                    continue
-
-                                log(f"      הליך {proc_idx}/{num_procs - 1}: {proc_name}")
-                                await navigate_to_search(page)
-                                await do_search(page, court_idx, judge_idx, dt_name, proc_idx)
-
-                                p_count, p_capped = await get_result_count(page)
-                                log(f"      תוצאות: {p_count}{' ← עדיין מוגבל!' if p_capped else ''}")
-
-                                if p_count > 0:
-                                    await process_results(page)
-
-                                done.add(proc_key)
-                                save_progress(done)
-                                await asyncio.sleep(random.uniform(1, 3))
-
-                            # מסמנים את השילוב הראשי כהושלם
-                            done.add(key)
-                            save_progress(done)
-
-                        else:
-                            await process_results(page)
-                            done.add(key)
-                            save_progress(done)
-
-                        await asyncio.sleep(random.uniform(1, 3))
+                # ── קוד פילטור לפי שופט — שמור לשימוש עתידי (טווחי תאריך רחבים) ──────
+                # for court_idx in range(1, num_courts):
+                #     await navigate_to_search(page)
+                #     court_name = court_names[court_idx]
+                #     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
+                #     await page.wait_for_timeout(3000)
+                #     judge_options = await page.locator("#LocateByParameters1_ddlJudgeName option").all()
+                #     judge_names = [(await opt.inner_text()).strip() for opt in judge_options]
+                #     for judge_idx in range(1, len(judge_names)):
+                #         judge_name = judge_names[judge_idx]
+                #         key = progress_key(dt_name, court_idx, judge_idx)
+                #         if key in done:
+                #             continue
+                #         await navigate_to_search(page)
+                #         await do_search(page, court_idx, dt_name)  # להוסיף judge_idx בחתימה
+                #         count, is_capped = await get_result_count(page)
+                #         if count > 0:
+                #             await process_results(page)
+                #         done.add(key); save_progress(done)
+                # ─────────────────────────────────────────────────────────────────────
 
         except KeyboardInterrupt:
             log("\nנעצר על ידי המשתמש (Ctrl+C)")
