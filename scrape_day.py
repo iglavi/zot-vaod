@@ -204,6 +204,7 @@ async def export_page_csv(page) -> list[dict]:
 async def discover_pagination(page):
     """מגלה ומדפיס כל כפתורי ניווט עמודים שנמצאו בדף."""
     candidates = [
+        '[ref="btNext"]',              '.ag-paging-panel [ref="btNext"]',
         'button:has-text("לדף הבא")', 'a:has-text("לדף הבא")',
         'button:has-text("הבא")',      'a:has-text("הבא")',
         '[id*="btnNext"]',             '[id*="NextPage"]',
@@ -230,21 +231,36 @@ async def discover_pagination(page):
 
 
 async def go_next_page(page) -> bool:
-    """עובר לדף הבא. מחזיר True אם עבר, False אם אין."""
-    selectors = [
-        'button:has-text("לדף הבא")', 'a:has-text("לדף הבא")',
+    """עובר לדף הבא של AG-Grid. מחזיר True אם עבר, False אם אין."""
+    # שיטה ראשונה: כפתור AG-Grid הפנימי [ref="btNext"] דרך JavaScript
+    try:
+        moved = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('[ref="btNext"]');
+                if (!btn) return false;
+                if (btn.classList.contains('ag-disabled') || btn.disabled) return false;
+                btn.click();
+                return true;
+            }
+        """)
+        if moved:
+            await page.wait_for_timeout(1500)
+            log("    → דף הבא (AG-Grid)")
+            return True
+    except Exception:
+        pass
+    # שיטה שנייה: סלקטורים של AG-Grid
+    for sel in [
+        '[ref="btNext"]:not(.ag-disabled)',
+        '.ag-paging-panel [ref="btNext"]',
         '[id*="btnNext"]:not([disabled])',
         '[id*="NextPage"]:not([disabled])',
-        'button:has-text("הבא")',      'a:has-text("הבא")',
-        '.pagination-next:not(.disabled)',
-    ]
-    for sel in selectors:
+    ]:
         try:
             el = page.locator(sel).first
             if await el.is_visible() and await el.is_enabled():
                 await el.click()
-                await page.wait_for_timeout(2000)
-                await dismiss_popup(page)
+                await page.wait_for_timeout(1500)
                 log("    → דף הבא")
                 return True
         except Exception:
@@ -276,8 +292,27 @@ async def download_word_for_row(page, row_idx: int, case_number: str) -> Path | 
 
     # לחיצה פיזית על checkbox
     try:
+        # גלילה לשורה תחילה (AG-Grid מסתיר שורות מחוץ לתצוגה)
+        await page.evaluate(f"""
+            () => {{
+                const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
+                if (row) row.scrollIntoView({{block: 'center', behavior: 'instant'}});
+            }}
+        """)
+        await page.wait_for_timeout(200)
         pos = await page.evaluate(f"""
             () => {{
+                // שיטה ראשונה: לפי row-index של AG-Grid
+                const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
+                if (row) {{
+                    const cb = row.querySelector('input[type=checkbox]');
+                    if (cb) {{
+                        const r = cb.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0)
+                            return {{x: r.left + r.width / 2, y: r.top + r.height / 2}};
+                    }}
+                }}
+                // fallback: לפי מיקום בין כל ה-checkboxes הגלויים
                 const allCbs = [...document.querySelectorAll('input[type=checkbox]')];
                 const dataCbs = allCbs.filter(cb =>
                     cb.offsetParent !== null &&
@@ -360,6 +395,7 @@ async def process_results(page):
     """
     page_num = 1
     pagination_discovered = False
+    first_case_of_page1 = None   # לזיהוי דף כפול (pagination שחוזרת להתחלה)
 
     while True:
         log(f"    דף תוצאות {page_num}")
@@ -374,6 +410,14 @@ async def process_results(page):
             count, _ = await get_result_count(page)
             if count == 0:
                 log("    אין תוצאות בדף")
+            break
+
+        # בדיקת דף כפול — אם הדף החדש מתחיל באותה שורה כמו דף 1, עצור
+        first_case = rows[0].get("מספר תיק", "").strip()
+        if page_num == 1:
+            first_case_of_page1 = first_case
+        elif first_case and first_case == first_case_of_page1:
+            log(f"    ← דף {page_num} זהה לדף 1 — pagination לא עובדת, עוצר")
             break
 
         master_rows = []
@@ -486,7 +530,10 @@ async def main():
             log(traceback.format_exc())
         finally:
             save_progress(done)
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception:
+                pass
             log(f"\nסיום. {len(done)} שילובים הושלמו.")
             _log_fh.close()
 
