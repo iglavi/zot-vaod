@@ -1,0 +1,13 @@
+# הגדרות אישיות — הנתיב ספציפי למשתמש
+config.json
+
+# פלט הסקראפר
+output/
+*.csv
+*.json
+!config.example.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/

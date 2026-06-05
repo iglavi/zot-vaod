@@ -14,6 +14,7 @@ import json
 import random
 import re
 import tempfile
+from dataclasses import dataclass, field
 from datetime import date, timedelta, datetime
 from pathlib import Path
 
@@ -31,7 +32,7 @@ PROGRESS_FILE = OUTPUT_DIR / _cfg.get("progress_file", "progress.json")
 DATA_FILE     = OUTPUT_DIR / "data.json"
 LOG_FILE      = OUTPUT_DIR / _cfg.get("log_file", "log.txt")
 
-HEADLESS       = _cfg.get("headless", False)
+HEADLESS       = _cfg.get("headless", True)
 DECISION_TYPES = _cfg.get("decision_types", ["פסק דין", "גזר דין", "הכרעת דין"])
 
 SITE_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
@@ -42,22 +43,28 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
 ]
 
-# ─────────────────────────────────────────────────────────
-_log_fh = None
-_docs_downloaded = 0   # מספר המסמכים שנוספו ל-metadata
-_errors_count    = 0   # מספר השגיאות שנרשמו
+
+# ── מצב ריצה ─────────────────────────────────────────────
+
+@dataclass
+class RunState:
+    log_fh: object = None
+    docs_downloaded: int = 0
+    errors_count: int = 0
+
+
+_state = RunState()
 
 
 def log(msg: str, is_error: bool = False):
-    global _errors_count
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line)
-    if _log_fh:
-        _log_fh.write(line + "\n")
-        _log_fh.flush()
+    if _state.log_fh:
+        _state.log_fh.write(line + "\n")
+        _state.log_fh.flush()
     if is_error:
-        _errors_count += 1
+        _state.errors_count += 1
 
 
 def prevent_sleep():
@@ -129,6 +136,7 @@ async def navigate_to_search(page):
     מנווט לדף החיפוש לפי פרמטרים.
     מנסה קודם ללחוץ על הטאב ישירות (מהיר) — ורק אם נכשל טוען מחדש.
     אם האתר לא זמין — ממתין 2 דקות, אחר כך 2 שעות, אחר כך 2 שעות נוספות.
+    לאחר 4 ניסיונות כושלים — זורק exception ומסיים את הריצה.
     """
     WAIT_SCHEDULE = [
         120,        # ניסיון 2: אחרי 2 דקות
@@ -252,7 +260,8 @@ async def get_result_count(page) -> tuple[int, bool]:
 
 async def export_page_csv(page) -> list[dict]:
     try:
-        tmp = Path(tempfile.mktemp(suffix=".csv"))
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tf:
+            tmp = Path(tf.name)
         async with page.expect_download(timeout=20000) as dl_info:
             await page.evaluate("""
                 () => {
@@ -350,8 +359,7 @@ def append_to_master_csv(rows: list[dict]):
         if file_is_new:
             writer.writeheader()
         writer.writerows(to_add)
-    global _docs_downloaded
-    _docs_downloaded += len(to_add)
+    _state.docs_downloaded += len(to_add)
     log(f"    נוספו {len(to_add)} שורות, דולגו {skipped} כפולות")
 
 
@@ -445,11 +453,10 @@ async def scrape_range(page, court_idx: int, dt_name: str,
 # ── main ──────────────────────────────────────────────────
 
 async def main():
-    global _log_fh
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     prevent_sleep()
-    _log_fh = open(LOG_FILE, "a", encoding="utf-8")
+    _state.log_fh = open(LOG_FILE, "a", encoding="utf-8")
     run_start = datetime.now()
     log("=" * 60)
     log(f"scraper.py — {DATE_FROM} עד {DATE_TO}")
@@ -545,12 +552,12 @@ async def main():
             log("\n" + "=" * 60)
             log("סיכום הרצה:")
             log(f"  זמן ריצה:       {elapsed_str}")
-            log(f"  מסמכים שנוספו:  {_docs_downloaded}")
-            log(f"  תקלות:          {_errors_count}")
+            log(f"  מסמכים שנוספו:  {_state.docs_downloaded}")
+            log(f"  תקלות:          {_state.errors_count}")
             log(f"  שילובים שהושלמו: {len(done)}")
             log("=" * 60)
-            if _log_fh:
-                _log_fh.close()
+            if _state.log_fh:
+                _state.log_fh.close()
 
 
 asyncio.run(main())
