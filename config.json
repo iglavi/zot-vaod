@@ -1,0 +1,13 @@
+{
+  "date_from": "2000-01-01",
+  "date_to":   "2000-01-31",
+
+  "output_dir":    "C:\\Users\\MPI-User\\Desktop\\nethamishpat",
+  "metadata_file": "metadata.csv",
+  "progress_file": "progress.json",
+  "log_file":      "log.txt",
+
+  "decision_types": ["פסק דין", "גזר דין", "הכרעת דין"],
+
+  "headless": false
+}
