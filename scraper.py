@@ -249,13 +249,13 @@ async def get_result_count(page) -> tuple[int, bool]:
         m = re.search(r'(\d+)\s*תוצאות', body)
         if m:
             n = int(m.group(1))
-            return n, (n >= 100)
+            return n, (n >= 54)  # 54 = 18 רשומות × 3 שורות רשת — תקרת האתר
     except Exception:
         pass
     try:
         count = await page.locator(".ag-row").count()
         if count > 0:
-            return count, (count >= 100)
+            return count, (count >= 54)
     except Exception:
         pass
     return 0, False
