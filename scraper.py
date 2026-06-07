@@ -3,8 +3,10 @@ scraper.py — סקראפר נט המשפט
 עובד יום-יום על כל הערכאות הרלוונטיות.
 מוריד פסקי דין, גזרי דין והכרעות דין.
 
-חלוקה לחצאים (binary split) קיימת כרשת ביטחון בלבד —
-בחיפוש יומי לפי ערכאה לא אמורות להיות 100 תוצאות בפועל.
+אסטרטגיה:
+  1. חיפוש "כל הערכאות" (index 0) — אם יש פחות מ-100 תוצאות, מורידים הכל בחיפוש אחד.
+  2. אם יש 100+ — יורדים לחיפוש לפי ערכאה בנפרד (רשת ביטחון).
+  3. אם גם ערכאה בודדת ביום בודד מחזירה 100 — מחלקים לפי שופט ואז לפי הליך.
 """
 
 import asyncio
@@ -14,7 +16,7 @@ import json
 import random
 import re
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta, datetime
 from pathlib import Path
 
@@ -42,6 +44,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
 ]
+
+# ערכאות שמדלגים עליהן תמיד — לא רלוונטיות לפרויקט
+SKIP_PREFIXES = ("בית דין", "בית משפט צבאי", "ועדת שחרורים")
 
 
 # ── מצב ריצה ─────────────────────────────────────────────
@@ -125,7 +130,7 @@ async def dismiss_popup(page):
         try:
             if await locator.count() > 0:
                 await locator.first.click()
-                await page.wait_for_timeout(600)
+                await page.wait_for_timeout(400)
                 return
         except Exception:
             pass
@@ -149,7 +154,7 @@ async def navigate_to_search(page):
         btn = page.get_by_text("איתור לפי פרמטרים").first
         if await btn.count() > 0 and await btn.is_visible():
             await btn.click(timeout=5000)
-            await page.wait_for_timeout(800)
+            await page.wait_for_timeout(600)
             if await page.locator("#LocateByParameters1_ddlSelectCourt").count() > 0:
                 return
     except Exception:
@@ -159,12 +164,12 @@ async def navigate_to_search(page):
     for attempt in range(1, len(WAIT_SCHEDULE) + 2):
         try:
             await page.goto(SITE_URL, timeout=45000)
-            await page.wait_for_timeout(random.uniform(3500, 5000))
+            await page.wait_for_timeout(random.uniform(3000, 4500))
             await dismiss_popup(page)
             await page.get_by_text("איתור החלטות").first.click(timeout=20000)
-            await page.wait_for_timeout(random.uniform(1500, 2500))
+            await page.wait_for_timeout(random.uniform(1200, 2000))
             await page.get_by_text("איתור לפי פרמטרים").first.click(timeout=20000)
-            await page.wait_for_timeout(random.uniform(1000, 2000))
+            await page.wait_for_timeout(random.uniform(800, 1500))
             return
         except Exception as e:
             err = str(e)
@@ -201,7 +206,7 @@ async def set_date_picker(page, field_id: str, d: date):
             }}
         }}
     """)
-    await page.wait_for_timeout(200)
+    await page.wait_for_timeout(150)
 
 
 async def do_search(page, court_idx: int, dt_name: str,
@@ -210,22 +215,22 @@ async def do_search(page, court_idx: int, dt_name: str,
                     proc_idx: int | None = None):
     """חיפוש לפי ערכאה + סוג + טווח תאריכים (+ שופט/הליך אופציונלי)."""
     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
-    await page.wait_for_timeout(1200)
+    await page.wait_for_timeout(900)
 
     if judge_idx is not None:
         try:
             await page.locator("#LocateByParameters1_ddlJudgeName").select_option(index=judge_idx)
-            await page.wait_for_timeout(400)
+            await page.wait_for_timeout(300)
         except Exception:
             pass
 
     await page.locator("#LocateByParameters1_ddlDecisionType").select_option(label=dt_name)
-    await page.wait_for_timeout(400)
+    await page.wait_for_timeout(300)
 
     if proc_idx is not None:
         try:
             await page.locator("#LocateByParameters1_ddlSelectProceeding").select_option(index=proc_idx)
-            await page.wait_for_timeout(400)
+            await page.wait_for_timeout(300)
         except Exception:
             pass
 
@@ -233,9 +238,9 @@ async def do_search(page, court_idx: int, dt_name: str,
     await set_date_picker(page, "LocateByParameters1_DateTo", to_date)
 
     await page.locator("#ButtonsGroup1_btnLocate").click()
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(2500)
     await dismiss_popup(page)
-    await page.wait_for_timeout(800)
+    await page.wait_for_timeout(500)
 
 
 async def get_result_count(page) -> tuple[int, bool]:
@@ -275,9 +280,9 @@ async def export_page_csv(page) -> list[dict]:
                     }));
                 }
             """)
-            await page.wait_for_timeout(800)
+            await page.wait_for_timeout(600)
             await page.locator(".ag-menu-option").click()
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(400)
             await page.get_by_text("ייצוא נתונים ל- CSV").click()
         dl = await dl_info.value
         await dl.save_as(str(tmp))
@@ -377,10 +382,8 @@ async def process_results(page):
 
 # ── חלוקה בינארית (רשת ביטחון) ───────────────────────────
 #
-# בחיפוש יומי לפי ערכאה, לא אמורות להיות 100 תוצאות בפועל.
-# הפונקציה הזו מופעלת רק אם בכל זאת הגענו ל-100 — ומחלקת
-# את החיפוש לחצאים עד שמגיעים לפחות מ-100 תוצאות.
-# אם גם ביום בודד יש 100 — מנסה לפלטר לפי שופט, ואז לפי הליך.
+# מופעלת רק כשיש 100+ תוצאות. מחלקת לפי ערכאה, ואם גם אז
+# יש 100 ביום בודד — לפי שופט ואז לפי הליך.
 
 async def scrape_range(page, court_idx: int, dt_name: str,
                        from_date: date, to_date: date,
@@ -394,7 +397,7 @@ async def scrape_range(page, court_idx: int, dt_name: str,
 
     count, is_capped = await get_result_count(page)
     range_str = f"{date_to_str(from_date)} עד {date_to_str(to_date)}" if from_date != to_date else date_to_str(from_date)
-    log(f"{indent}  תוצאות: {count}{' ← מוגבל! (רשת ביטחון)' if is_capped else ''}")
+    log(f"{indent}  תוצאות: {count}{' ← מוגבל!' if is_capped else ''}")
 
     if count == 0:
         return
@@ -405,7 +408,6 @@ async def scrape_range(page, court_idx: int, dt_name: str,
 
     # ── רשת ביטחון: הגענו ל-100 ──────────────────────────
     if from_date == to_date:
-        # יום בודד עם 100 — לא ניתן לחלק תאריכים
         if judge_idx is None:
             log(f"{indent}  [רשת ביטחון] יום בודד עם 100 — מחלק לפי שופטים")
             await navigate_to_search(page)
@@ -419,7 +421,7 @@ async def scrape_range(page, court_idx: int, dt_name: str,
                                    from_date, to_date,
                                    judge_idx=jidx,
                                    depth=depth + 1)
-                await asyncio.sleep(random.uniform(1, 2))
+                await asyncio.sleep(random.uniform(0.5, 1.5))
         elif proc_idx is None:
             log(f"{indent}  [רשת ביטחון] שופט+יום עם 100 — מחלק לפי הליך")
             await navigate_to_search(page)
@@ -434,20 +436,53 @@ async def scrape_range(page, court_idx: int, dt_name: str,
                                    judge_idx=judge_idx,
                                    proc_idx=pidx,
                                    depth=depth + 1)
-                await asyncio.sleep(random.uniform(1, 2))
+                await asyncio.sleep(random.uniform(0.5, 1.5))
         else:
             log(f"{indent}  [רשת ביטחון] לא ניתן לחלק יותר — מוריד 100 תוצאות")
             await process_results(page)
         return
 
-    # חלוקה בינארית של הטווח (רלוונטי רק אם קראו לפונקציה עם טווח > יום)
     mid = mid_date(from_date, to_date)
     log(f"{indent}  [רשת ביטחון] מחלק: {date_to_str(from_date)}-{date_to_str(mid)} | {date_to_str(mid + timedelta(days=1))}-{date_to_str(to_date)}")
     await scrape_range(page, court_idx, dt_name, from_date, mid,
                        judge_idx, proc_idx, depth + 1)
-    await asyncio.sleep(random.uniform(1, 2))
+    await asyncio.sleep(random.uniform(0.5, 1.5))
     await scrape_range(page, court_idx, dt_name, mid + timedelta(days=1), to_date,
                        judge_idx, proc_idx, depth + 1)
+
+
+# ── חיפוש יומי: "כל הערכאות" קודם ───────────────────────
+#
+# חיפוש אחד לכל היום במקום 89 חיפושים נפרדים.
+# אם יש פחות מ-100 — מסיימים בחיפוש אחד.
+# אם יש 100+ — יורדים לחיפוש לפי ערכאה בנפרד.
+
+async def scrape_day(page, dt_name: str, day: date,
+                     court_names: list[str], num_courts: int):
+    day_str = date_to_str(day)
+
+    # ── שלב 1: חיפוש "כל הערכאות" (index 0) ──────────────
+    await navigate_to_search(page)
+    await do_search(page, 0, dt_name, day, day)
+    count, is_capped = await get_result_count(page)
+    log(f"  [{dt_name}] {day_str} — כל הערכאות: {count} תוצאות")
+
+    if count == 0:
+        return  # יום ריק — מדלגים על כל הערכאות
+
+    if not is_capped:
+        await process_results(page)  # הכל בחיפוש אחד
+        return
+
+    # ── שלב 2: רשת ביטחון — יש 100+, יורדים לפי ערכאה ───
+    log(f"  [{dt_name}] {day_str} — 100+ תוצאות, מחפש לפי ערכאה...")
+    for court_idx in range(1, num_courts):
+        court_name = court_names[court_idx]
+        if any(court_name.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        log(f"    ערכאה {court_idx}: {court_name}")
+        await scrape_range(page, court_idx, dt_name, day, day)
+        await asyncio.sleep(random.uniform(0.8, 2))
 
 
 # ── main ──────────────────────────────────────────────────
@@ -498,10 +533,6 @@ async def main():
             from_d = str_to_date(DATE_FROM)
             to_d   = str_to_date(DATE_TO)
 
-            # ערכאות שמדלגים עליהן תמיד — לא רלוונטיות לפרויקט
-            SKIP_PREFIXES = ("בית דין", "בית משפט צבאי", "ועדת שחרורים")
-
-            # לולאה יומית — יום אחד בכל פעם
             current_d = from_d
             while current_d <= to_d:
                 day_str = date_to_str(current_d)
@@ -509,26 +540,17 @@ async def main():
                 log(f"יום: {day_str}")
 
                 for dt_name in DECISION_TYPES:
-                    log(f"\n  סוג החלטה: {dt_name}")
+                    key = progress_key(day_str, dt_name)
 
-                    for court_idx in range(1, num_courts):
-                        court_name = court_names[court_idx]
+                    if key in done:
+                        log(f"  [{dt_name}] {day_str} — כבר הושלם")
+                        continue
 
-                        if any(court_name.startswith(p) for p in SKIP_PREFIXES):
-                            continue  # דילוג שקט — לא כותב ללוג כדי לא להציף
+                    await scrape_day(page, dt_name, current_d, court_names, num_courts)
 
-                        key = progress_key(day_str, dt_name, court_idx)
-
-                        if key in done:
-                            log(f"    ערכאה {court_idx}: {court_name} — כבר הושלם")
-                            continue
-
-                        log(f"\n    ערכאה {court_idx}: {court_name}")
-                        await scrape_range(page, court_idx, dt_name, current_d, current_d)
-
-                        done.add(key)
-                        save_progress(done)
-                        await asyncio.sleep(random.uniform(1, 3))
+                    done.add(key)
+                    save_progress(done)
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
 
                 current_d += timedelta(days=1)
 
