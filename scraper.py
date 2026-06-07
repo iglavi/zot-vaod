@@ -246,16 +246,22 @@ async def do_search(page, court_idx: int, dt_name: str,
 async def get_result_count(page) -> tuple[int, bool]:
     try:
         body = await page.locator("body").inner_text()
+        # pagination: "1 עד 18 מתוך 100" — זה הסה"כ האמיתי
+        m = re.search(r'מתוך\s+(\d+)', body)
+        if m:
+            n = int(m.group(1))
+            return n, (n > 18)
+        # כל התוצאות בעמוד אחד — אין pagination
         m = re.search(r'(\d+)\s*תוצאות', body)
         if m:
             n = int(m.group(1))
-            return n, (n >= 54)  # 54 = 18 רשומות × 3 שורות רשת — תקרת האתר
+            return n, False
     except Exception:
         pass
     try:
         count = await page.locator(".ag-row").count()
         if count > 0:
-            return count, (count >= 54)
+            return count, (count > 18)
     except Exception:
         pass
     return 0, False
