@@ -370,52 +370,14 @@ def append_to_master_csv(rows: list[dict]):
 
 # ── עיבוד תוצאות ─────────────────────────────────────────
 
-async def go_next_page(page) -> bool:
-    """לוחץ על כפתור 'עמוד הבא' של ag-grid. מחזיר True אם עבר."""
-    try:
-        moved = await page.evaluate("""
-            () => {
-                const btn = document.querySelector('[ref="btNext"]');
-                if (!btn) return false;
-                if (btn.classList.contains('ag-disabled') || btn.disabled) return false;
-                btn.click();
-                return true;
-            }
-        """)
-        if moved:
-            await page.wait_for_timeout(1500)
-            return True
-    except Exception:
-        pass
-    return False
-
-
 async def process_results(page):
-    """מייצא CSV מכל עמודי התוצאות (pagination) ומאחד לקובץ המרכזי."""
-    page_num = 1
-    first_case_of_page1 = None
-
-    while True:
-        rows = await export_page_csv(page)
-        if not rows:
-            if page_num == 1:
-                log("    אין שורות לעיבוד")
-            break
-
-        # זיהוי לולאה — אם עמוד 2+ זהה לעמוד 1, pagination לא עובדת
-        first_case = rows[0].get("מספר תיק", "").strip()
-        if page_num == 1:
-            first_case_of_page1 = first_case
-        elif first_case and first_case == first_case_of_page1:
-            log(f"    עמוד {page_num} זהה לעמוד 1 — עוצר")
-            break
-
-        log(f"    עמוד {page_num}: {len(rows)} שורות")
-        append_to_master_csv(rows)
-
-        if not await go_next_page(page):
-            break
-        page_num += 1
+    """מייצא CSV של כל התוצאות בייצוא אחד ומאחד לקובץ המרכזי."""
+    rows = await export_page_csv(page)
+    if not rows:
+        log("    אין שורות לעיבוד")
+        return
+    log(f"    CSV: {len(rows)} שורות")
+    append_to_master_csv(rows)
 
 
 # ── חלוקה בינארית (רשת ביטחון) ───────────────────────────
