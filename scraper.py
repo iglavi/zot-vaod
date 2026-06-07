@@ -15,6 +15,7 @@ import ctypes
 import json
 import random
 import re
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import date, timedelta, datetime
@@ -23,7 +24,8 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 # ── קריאת הגדרות ──────────────────────────────────────────
-_cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
+_config_path = sys.argv[1] if len(sys.argv) > 1 else "config.json"
+_cfg = json.loads(Path(_config_path).read_text(encoding="utf-8"))
 
 DATE_FROM = _cfg["date_from"]
 DATE_TO   = _cfg["date_to"]

@@ -6,6 +6,7 @@ output/
 *.csv
 *.json
 !config.example.json
+!config_20*.json
 
 # Python
 __pycache__/
