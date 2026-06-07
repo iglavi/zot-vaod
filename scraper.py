@@ -238,9 +238,17 @@ async def do_search(page, court_idx: int, dt_name: str,
     await set_date_picker(page, "LocateByParameters1_DateTo", to_date)
 
     await page.locator("#ButtonsGroup1_btnLocate").click()
-    await page.wait_for_timeout(2500)
-    await dismiss_popup(page)
+    try:
+        await page.locator(".ag-row").first.wait_for(timeout=10000)
+    except Exception:
+        pass  # אין תוצאות
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        pass  # timeout בסדר — ממשיכים
     await page.wait_for_timeout(500)
+    await dismiss_popup(page)
+    await page.wait_for_timeout(300)
 
 
 async def get_result_count(page) -> tuple[int, bool]:
