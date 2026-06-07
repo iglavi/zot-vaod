@@ -557,7 +557,23 @@ async def main():
                         log(f"  [{dt_name}] {day_str} — כבר הושלם")
                         continue
 
-                    await scrape_day(page, dt_name, current_d, court_names, num_courts)
+                    # retry עד 3 פעמים אם האתר timeout
+                    for attempt in range(1, 4):
+                        try:
+                            await scrape_day(page, dt_name, current_d, court_names, num_courts)
+                            break
+                        except Exception as e:
+                            err = str(e)
+                            is_transient = any(x in err for x in [
+                                "Timeout", "TimeoutError", "net::",
+                                "ERR_", "Target page", "context or browser",
+                            ])
+                            if not is_transient or attempt == 3:
+                                raise
+                            wait_sec = attempt * 120  # 2 דק', 4 דק'
+                            log(f"  [retry {attempt}/3] timeout — ממתין {wait_sec // 60} דקות...", is_error=True)
+                            await asyncio.sleep(wait_sec)
+                            await navigate_to_search(page)
 
                     done.add(key)
                     save_progress(done)
