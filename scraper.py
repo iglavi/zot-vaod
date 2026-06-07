@@ -252,9 +252,10 @@ async def do_search(page, court_idx: int, dt_name: str,
 
 
 async def get_result_count(page) -> tuple[int, bool]:
+    # קורא מ-pagination: "1 עד 18 מתוך 100" — המספר האחרי "מתוך" הוא הסה"כ האמיתי
     try:
         body = await page.locator("body").inner_text()
-        m = re.search(r'(\d+)\s*תוצאות', body)
+        m = re.search(r'מתוך\s+(\d+)', body)
         if m:
             n = int(m.group(1))
             return n, (n >= 100)
