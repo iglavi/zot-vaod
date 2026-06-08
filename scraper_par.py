@@ -181,7 +181,7 @@ async def navigate_to_search(page):
                 "ERR_NETWORK_IO_SUSPENDED", "ERR_CONNECTION_REFUSED",
                 "ERR_NAME_NOT_RESOLVED", "net::", "Timeout",
                 "Target page", "context or browser has been closed",
-                "Target crashed",
+                "Target crashed", "chrome-error",
             ])
             if not is_site_down or attempt > len(WAIT_SCHEDULE):
                 raise
@@ -278,9 +278,16 @@ async def export_page_csv(page) -> list[dict]:
     try:
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tf:
             tmp = Path(tf.name)
-        # Escape מסלק כל overlay/dialog בלי לגרום ל-PostBack
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(300)
+        if await page.locator(".ag-row").count() == 0:
+            return []
+        # lean_overlay חוסם קליקים כשיש 100+ — לוחצים על ה-overlay עצמו (לא כפתור אישור)
+        try:
+            overlay = page.locator("[id^='lean_overlay']")
+            if await overlay.count() > 0 and await overlay.is_visible():
+                await overlay.click()
+                await page.wait_for_timeout(400)
+        except Exception:
+            pass
         async with page.expect_download(timeout=20000) as dl_info:
             await page.evaluate("""
                 () => {
