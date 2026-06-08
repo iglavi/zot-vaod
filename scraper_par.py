@@ -278,6 +278,9 @@ async def export_page_csv(page) -> list[dict]:
     try:
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tf:
             tmp = Path(tf.name)
+        # פוטר overlay לפני פתיחת תפריט — קליק על overlay סוגר גם את התפריט
+        await dismiss_popup(page)
+        await page.wait_for_timeout(200)
         async with page.expect_download(timeout=20000) as dl_info:
             await page.evaluate("""
                 () => {
@@ -292,7 +295,6 @@ async def export_page_csv(page) -> list[dict]:
                 }
             """)
             await page.wait_for_timeout(600)
-            await dismiss_popup(page)
             await page.locator(".ag-menu-option").dispatch_event("click")
             await page.wait_for_timeout(400)
             await page.get_by_text("ייצוא נתונים ל- CSV").dispatch_event("click")
