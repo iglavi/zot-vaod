@@ -179,6 +179,7 @@ async def navigate_to_search(page):
                 "ERR_NETWORK_IO_SUSPENDED", "ERR_CONNECTION_REFUSED",
                 "ERR_NAME_NOT_RESOLVED", "net::", "Timeout",
                 "Target page", "context or browser has been closed",
+                "Target crashed",
             ])
             if not is_site_down or attempt > len(WAIT_SCHEDULE):
                 raise
@@ -426,6 +427,10 @@ async def scrape_range(page, court_idx: int, dt_name: str,
             judge_count = await page.locator(
                 "#LocateByParameters1_ddlJudgeName option"
             ).count()
+            if judge_count <= 1:
+                log(f"{indent}  [רשת ביטחון] אין שופטים לפיצול — מוריד 100 תוצאות")
+                await process_results(page)
+                return
             log(f"{indent}  נמצאו {judge_count - 1} שופטים")
             for jidx in range(1, judge_count):
                 await scrape_range(page, court_idx, dt_name,
@@ -567,6 +572,7 @@ async def main():
                             is_transient = any(x in err for x in [
                                 "Timeout", "TimeoutError", "net::",
                                 "ERR_", "Target page", "context or browser",
+                                "Target crashed",
                             ])
                             if not is_transient or attempt == 3:
                                 raise
