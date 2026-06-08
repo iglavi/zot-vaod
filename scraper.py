@@ -136,6 +136,14 @@ async def dismiss_popup(page):
                 return
         except Exception:
             pass
+    # lean_overlay — popup "100+ תוצאות" שחוסם קליקים
+    try:
+        overlay = page.locator("[id^='lean_overlay']")
+        if await overlay.count() > 0 and await overlay.is_visible():
+            await overlay.click()
+            await page.wait_for_timeout(400)
+    except Exception:
+        pass
 
 
 async def navigate_to_search(page):
@@ -293,9 +301,10 @@ async def export_page_csv(page) -> list[dict]:
                 }
             """)
             await page.wait_for_timeout(600)
-            await page.locator(".ag-menu-option").click()
+            await dismiss_popup(page)
+            await page.locator(".ag-menu-option").dispatch_event("click")
             await page.wait_for_timeout(400)
-            await page.get_by_text("ייצוא נתונים ל- CSV").click()
+            await page.get_by_text("ייצוא נתונים ל- CSV").dispatch_event("click")
         dl = await dl_info.value
         await dl.save_as(str(tmp))
         with open(tmp, encoding="utf-8-sig") as f:
