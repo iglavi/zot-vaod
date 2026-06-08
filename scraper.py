@@ -287,9 +287,9 @@ async def export_page_csv(page) -> list[dict]:
     try:
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tf:
             tmp = Path(tf.name)
-        # פוטר overlay לפני פתיחת תפריט — קליק על overlay סוגר גם את התפריט
-        await dismiss_popup(page)
-        await page.wait_for_timeout(200)
+        # Escape מסלק כל overlay/dialog בלי לגרום ל-PostBack
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
         async with page.expect_download(timeout=20000) as dl_info:
             await page.evaluate("""
                 () => {
@@ -433,13 +433,16 @@ async def scrape_range(page, court_idx: int, dt_name: str,
     if from_date == to_date:
         if judge_idx is None:
             log(f"{indent}  [רשת ביטחון] יום בודד עם 100 — מחלק לפי שופטים")
+            # בוחרים ערכאה בלבד, ללא לחיצת "איתור" — ה-PostBack מאפס את ה-dropdown
             await navigate_to_search(page)
-            await do_search(page, court_idx, dt_name, from_date, to_date)
+            await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
+            await page.wait_for_timeout(1200)
             judge_count = await page.locator(
                 "#LocateByParameters1_ddlJudgeName option"
             ).count()
             if judge_count <= 1:
                 log(f"{indent}  [רשת ביטחון] אין שופטים לפיצול — מוריד 100 תוצאות")
+                await do_search(page, court_idx, dt_name, from_date, to_date)
                 await process_results(page)
                 return
             log(f"{indent}  נמצאו {judge_count - 1} שופטים")
