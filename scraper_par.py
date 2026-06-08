@@ -450,6 +450,10 @@ async def scrape_range(page, court_idx: int, dt_name: str,
             proc_count = await page.locator(
                 "#LocateByParameters1_ddlSelectProceeding option"
             ).count()
+            if proc_count <= 1:
+                log(f"{indent}  [רשת ביטחון] אין הליכים לפיצול — מוריד 100 תוצאות")
+                await process_results(page)
+                return
             log(f"{indent}  נמצאו {proc_count - 1} הליכים")
             for pidx in range(1, proc_count):
                 await scrape_range(page, court_idx, dt_name,
