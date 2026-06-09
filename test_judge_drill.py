@@ -99,11 +99,14 @@ async def main():
         ctx     = await browser.new_context()
         page    = await ctx.new_page()
 
+        # ── קרא שמות ערכאות פעם אחת ─────────────────────────
+        await goto_search(page)
+        all_court_opts = await read_options(page, "#LocateByParameters1_ddlSelectCourt")
+
         # ── שלב 1: כל הערכאות ────────────────────────────────
         print(f"=== שלב 1: כל הערכאות ===")
-        count_all, court_opts = await search(page, 0, DT_NAME, TEST_DATE)
+        count_all, _ = await search(page, 0, DT_NAME, TEST_DATE)
         p(f"כל הערכאות: {count_all} {'← מוגבל!' if count_all >= 100 else ''}")
-        p(f"סה\"כ ערכאות בדרופדאון: {len(court_opts)}")
 
         if count_all < 100:
             p("פחות מ-100 — אין צורך בפיצול")
@@ -113,7 +116,7 @@ async def main():
         # ── שלב 2: חיפוש ערכאה ספציפית ──────────────────────
         print(f"\n=== שלב 2: חיפוש ערכאה {COURT_IDX} ===")
         count_court, judge_opts = await search(page, COURT_IDX, DT_NAME, TEST_DATE)
-        cname = court_opts[COURT_IDX][1] if COURT_IDX < len(court_opts) else f"#{COURT_IDX}"
+        cname = all_court_opts[COURT_IDX][1] if COURT_IDX < len(all_court_opts) else f"#{COURT_IDX}"
         p(f"ערכאה {COURT_IDX} ({cname}): {count_court} {'← מוגבל!' if count_court >= 100 else ''}")
         p(f"שופטים (לפני PostBack): {len(judge_opts)-1}")
 
