@@ -169,6 +169,66 @@ async def main():
         if procs_after_search:
             p(f"  הליכים: {procs_after_search[:10]}")
 
+        # ── שלב 6: הלוגיקה החדשה — קרא proc_count לפני do_search ──
+        print(f"\n=== שלב 6: קריאת הליכים לפני איתור (הלוגיקה המתוקנת) ===")
+        # מדמה את מה שקורה כש-scrape_range מגיע ל-שופט+יום עם 100
+        # בוחרים ערכאה בלבד, קוראים הליכים, ואז מחפשים לפי כל הליך בנפרד
+
+        await goto_search(page)
+        await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=COURT_IDX)
+        await page.wait_for_timeout(1200)
+
+        proc_opts = await read_options(page, "#LocateByParameters1_ddlSelectProceeding")
+        judge_opts = await read_options(page, "#LocateByParameters1_ddlJudgeName")
+        p(f"הליכים אחרי 1200ms: {len(proc_opts)} → {[x[1] for x in proc_opts]}")
+        p(f"שופטים אחרי 1200ms: {len(judge_opts)}")
+
+        # מוצאים שופט שיש לו תוצאות (index=1)
+        JUDGE_IDX = 1
+        judge_name = judge_opts[JUDGE_IDX][1] if len(judge_opts) > JUDGE_IDX else "?"
+        p(f"\nבוחר שופט index={JUDGE_IDX}: {judge_name}")
+        p(f"מריץ חיפוש על כל {len(proc_opts)-1} הליכים:")
+
+        totals = {}
+        for pidx in range(1, len(proc_opts)):
+            proc_val  = proc_opts[pidx][0]
+            proc_name = proc_opts[pidx][1]
+
+            await goto_search(page)
+            await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=COURT_IDX)
+            await page.wait_for_timeout(900)
+            await page.locator("#LocateByParameters1_ddlJudgeName").select_option(index=JUDGE_IDX)
+            await page.wait_for_timeout(300)
+            await page.locator("#LocateByParameters1_ddlDecisionType").select_option(label=DT_NAME)
+            await page.wait_for_timeout(300)
+            await page.locator("#LocateByParameters1_ddlSelectProceeding").select_option(value=proc_val)
+            await page.wait_for_timeout(300)
+            await set_date(page, "LocateByParameters1_dateFrom", TEST_DATE)
+            await set_date(page, "LocateByParameters1_DateTo",   TEST_DATE)
+            await page.locator("#ButtonsGroup1_btnLocate").click()
+            try:
+                await page.locator(".ag-row").first.wait_for(timeout=10000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(500)
+
+            rows = await page.locator(".ag-row").count()
+            # קרא מספר אמיתי מ-pagination אם קיים
+            try:
+                body = await page.locator("body").inner_text()
+                import re
+                m = re.search(r'מתוך\s+(\d+)', body)
+                real = int(m.group(1)) if m else rows
+            except Exception:
+                real = rows
+
+            totals[proc_name] = real
+            capped = " ← מוגבל!" if real >= 100 else ""
+            p(f"  {proc_name}: {real}{capped}")
+
+        total_sum = sum(totals.values())
+        p(f"\nסה\"כ לשופט {judge_name}: {total_sum} תוצאות")
+
         print("\n=== סיום — הדפדפן נשאר פתוח 30 שניות לבחינה ידנית ===")
         await page.wait_for_timeout(30000)
         await browser.close()
