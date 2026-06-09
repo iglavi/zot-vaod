@@ -40,9 +40,23 @@ async def read_options(page, sel):
     opts = await page.locator(f"{sel} option").all()
     return [(await o.get_attribute("value"), (await o.inner_text()).strip()) for o in opts]
 
+async def dismiss_popup(page):
+    for locator in [
+        page.locator("button", has_text="אישור"),
+        page.locator("input[value='אישור']"),
+    ]:
+        try:
+            if await locator.count() > 0 and await locator.first.is_visible():
+                await locator.first.click()
+                await page.wait_for_timeout(400)
+                return
+        except Exception:
+            pass
+
 async def goto_search(page):
     await page.goto(SITE_URL, timeout=45000)
     await page.wait_for_timeout(3000)
+    await dismiss_popup(page)
     await page.get_by_text("איתור החלטות").first.click(timeout=20000)
     await page.wait_for_timeout(1500)
     await page.get_by_text("איתור לפי פרמטרים").first.click(timeout=20000)
