@@ -445,13 +445,17 @@ async def scrape_range(page, court_idx: int, dt_name: str,
                 await asyncio.sleep(random.uniform(0.5, 1.5))
         elif proc_idx is None:
             log(f"{indent}  [רשת ביטחון] שופט+יום עם 100 — מחלק לפי הליך")
+            # הליכים הם דרופדאון סטטי שנטען עם בחירת ערכאה (לפני PostBack)
+            # חייבים לקרוא אותו לפני do_search — אחרי PostBack הוא מתאפס ל-0
             await navigate_to_search(page)
-            await do_search(page, court_idx, dt_name, from_date, to_date, judge_idx)
+            await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
+            await page.wait_for_timeout(1200)
             proc_count = await page.locator(
                 "#LocateByParameters1_ddlSelectProceeding option"
             ).count()
             if proc_count <= 1:
                 log(f"{indent}  [רשת ביטחון] אין הליכים לפיצול — מוריד 100 תוצאות")
+                await do_search(page, court_idx, dt_name, from_date, to_date, judge_idx)
                 await process_results(page)
                 return
             log(f"{indent}  נמצאו {proc_count - 1} הליכים")
