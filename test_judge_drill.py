@@ -16,9 +16,10 @@ from datetime import date
 from playwright.async_api import async_playwright
 
 SITE_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
-HEADLESS  = False
-DT_NAME   = "גזר דין"
-TEST_DATE = date(2011, 1, 3)
+HEADLESS    = False
+DT_NAME     = "גזר דין"
+TEST_DATE   = date(2011, 1, 3)
+COURT_IDX   = 71   # ערכאה ידועה עם 100+ ביום זה
 
 def p(msg): print(f"  {msg}")
 
@@ -109,35 +110,29 @@ async def main():
             await browser.close()
             return
 
-        # ── שלב 2: מצא ערכאה עם 100+ ────────────────────────
-        print(f"\n=== שלב 2: סריקת ערכאות למציאת אחת עם 100+ ===")
-        target_court_idx  = None
-        target_court_name = None
-        target_judge_opts = []
+        # ── שלב 2: חיפוש ערכאה ספציפית ──────────────────────
+        print(f"\n=== שלב 2: חיפוש ערכאה {COURT_IDX} ===")
+        count_court, judge_opts = await search(page, COURT_IDX, DT_NAME, TEST_DATE)
+        cname = court_opts[COURT_IDX][1] if COURT_IDX < len(court_opts) else f"#{COURT_IDX}"
+        p(f"ערכאה {COURT_IDX} ({cname}): {count_court} {'← מוגבל!' if count_court >= 100 else ''}")
+        p(f"שופטים (לפני PostBack): {len(judge_opts)-1}")
 
-        for cidx in range(1, len(court_opts)):
-            cname = court_opts[cidx][1]
-            c, j_opts = await search(page, cidx, DT_NAME, TEST_DATE)
-            sym = " ← מוגבל!" if c >= 100 else ""
-            p(f"ערכאה {cidx:3d} ({cname}): {c}{sym}")
-            if c >= 100 and len(j_opts) > 1:
-                target_court_idx  = cidx
-                target_court_name = cname
-                target_judge_opts = j_opts
-                p(f"  → בחרנו ערכאה זו ({len(j_opts)-1} שופטים)")
-                break
+        if count_court < 100:
+            p("פחות מ-100 — אין מה לפצל. שנה את COURT_IDX.")
+            await browser.close()
+            return
 
-        if target_court_idx is None:
-            p("לא נמצאה ערכאה עם 100+ ושופטים — נסה תאריך/סוג מסמך אחר")
+        if len(judge_opts) <= 1:
+            p("אין שופטים בדרופדאון — בעיה בטעינת AJAX")
             await browser.close()
             return
 
         # ── שלב 3: פיצול לפי שופטים ─────────────────────────
-        print(f"\n=== שלב 3: פיצול ערכאה {target_court_idx} ({target_court_name}) לפי שופטים ===")
+        print(f"\n=== שלב 3: פיצול לפי שופטים ({len(judge_opts)-1} שופטים) ===")
         total = 0
-        for jidx in range(1, len(target_judge_opts)):
-            jname = target_judge_opts[jidx][1]
-            c, _ = await search(page, target_court_idx, DT_NAME, TEST_DATE, judge_idx=jidx)
+        for jidx in range(1, len(judge_opts)):
+            jname = judge_opts[jidx][1]
+            c, _ = await search(page, COURT_IDX, DT_NAME, TEST_DATE, judge_idx=jidx)
             if c == 0:
                 p(f"שופט {jidx:3d} ({jname}): 0")
                 continue
