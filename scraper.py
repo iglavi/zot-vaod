@@ -6,7 +6,7 @@ scraper.py — סקראפר נט המשפט
 אסטרטגיה:
   1. חיפוש "כל הערכאות" (index 0) — אם יש פחות מ-100 תוצאות, מורידים הכל בחיפוש אחד.
   2. אם יש 100+ — יורדים לחיפוש לפי ערכאה בנפרד (רשת ביטחון).
-  3. אם גם ערכאה בודדת ביום בודד מחזירה 100 — מחלקים לפי שופט ואז לפי הליך.
+  3. אם גם ערכאה בודדת ביום בודד מחזירה 100 — מחלקים לפי שופט.
 """
 
 import asyncio
@@ -406,7 +406,7 @@ async def process_results(page):
 # ── חלוקה בינארית (רשת ביטחון) ───────────────────────────
 #
 # מופעלת רק כשיש 100+ תוצאות. מחלקת לפי ערכאה, ואם גם אז
-# יש 100 ביום בודד — לפי שופט ואז לפי הליך.
+# יש 100 ביום בודד — לפי שופט.
 
 async def scrape_range(page, court_idx: int, dt_name: str,
                        from_date: date, to_date: date,
@@ -418,7 +418,6 @@ async def scrape_range(page, court_idx: int, dt_name: str,
     await do_search(page, court_idx, dt_name, from_date, to_date, judge_idx)
 
     count, is_capped = await get_result_count(page)
-    range_str = f"{date_to_str(from_date)} עד {date_to_str(to_date)}" if from_date != to_date else date_to_str(from_date)
     log(f"{indent}  תוצאות: {count}{' ← מוגבל!' if is_capped else ''}")
 
     if count == 0:
