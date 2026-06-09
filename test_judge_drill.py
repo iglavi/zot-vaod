@@ -1,10 +1,10 @@
 """
 test_judge_drill.py — בודק פיצול לפי שופטים
 
-הלוגיקה שנבדקת:
-  1. חיפוש יום+ערכאה+סוג מסמך
-  2. אם 100+ — חפש לפי כל שופט בנפרד
-  3. זהו. אין שלב שלישי.
+הלוגיקה:
+  1. חיפוש יום+סוג מסמך (כל הערכאות) — ודא 100+
+  2. מצא ערכאה שנותנת 100+ לבד
+  3. פצל אותה לפי שופטים
 
 ריצה:
     python test_judge_drill.py
@@ -16,10 +16,7 @@ from datetime import date
 from playwright.async_api import async_playwright
 
 SITE_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
-HEADLESS = False
-
-# ערכאה 88 = שלום ת"א (ידוע שמחזיר 100+ ב-2011-01-03 גזר דין)
-COURT_IDX = 88
+HEADLESS  = False
 DT_NAME   = "גזר דין"
 TEST_DATE = date(2011, 1, 3)
 
@@ -64,7 +61,6 @@ async def goto_search(page):
     await page.wait_for_timeout(1000)
 
 async def get_count(page):
-    """קורא ספירה אמיתית מ-pagination, או ספירת שורות כ-fallback."""
     try:
         body = await page.locator("body").inner_text()
         m = re.search(r'מתוך\s+(\d+)', body)
@@ -75,10 +71,12 @@ async def get_count(page):
     return await page.locator(".ag-row").count()
 
 async def search(page, court_idx, dt_name, d, judge_idx=None):
-    """חיפוש + המתנה לתוצאות. מחזיר ספירה."""
+    """חיפוש מלא. מחזיר (count, judge_options_read_before_postback)."""
     await goto_search(page)
     await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=court_idx)
-    await page.wait_for_timeout(900)
+    await page.wait_for_timeout(1200)
+    # קרא שופטים לפני PostBack (PostBack מאפס את הדרופדאון)
+    judge_opts = await read_options(page, "#LocateByParameters1_ddlJudgeName")
     if judge_idx is not None:
         await page.locator("#LocateByParameters1_ddlJudgeName").select_option(index=judge_idx)
         await page.wait_for_timeout(300)
@@ -92,7 +90,7 @@ async def search(page, court_idx, dt_name, d, judge_idx=None):
     except Exception:
         pass
     await page.wait_for_timeout(600)
-    return await get_count(page)
+    return await get_count(page), judge_opts
 
 async def main():
     async with async_playwright() as pw:
@@ -100,46 +98,54 @@ async def main():
         ctx     = await browser.new_context()
         page    = await ctx.new_page()
 
-        # ── שלב 1: חיפוש כל הערכאות ────────────────────────
-        print(f"=== שלב 1: חיפוש כל הערכאות (index 0) ===")
-        count_all = await search(page, 0, DT_NAME, TEST_DATE)
-        p(f"כל הערכאות: {count_all} תוצאות {'← מוגבל!' if count_all >= 100 else ''}")
+        # ── שלב 1: כל הערכאות ────────────────────────────────
+        print(f"=== שלב 1: כל הערכאות ===")
+        count_all, court_opts = await search(page, 0, DT_NAME, TEST_DATE)
+        p(f"כל הערכאות: {count_all} {'← מוגבל!' if count_all >= 100 else ''}")
+        p(f"סה\"כ ערכאות בדרופדאון: {len(court_opts)}")
 
-        # ── שלב 2: ודא שהשופטים נטענים לפני PostBack ────────
-        print(f"\n=== שלב 2: שופטים לפני חיפוש (ערכאה {COURT_IDX}) ===")
-        await goto_search(page)
-        await page.locator("#LocateByParameters1_ddlSelectCourt").select_option(index=COURT_IDX)
-        await page.wait_for_timeout(1200)
-        judge_opts = await read_options(page, "#LocateByParameters1_ddlJudgeName")
-        p(f"שופטים לאחר 1200ms: {len(judge_opts)}")
-        if len(judge_opts) > 1:
-            p(f"  5 ראשונים: {[x[1] for x in judge_opts[1:6]]}")
-
-        # ── שלב 3: חיפוש ערכאה בלי שופט ───────────────────
-        print(f"\n=== שלב 3: חיפוש ערכאה {COURT_IDX} ללא שופט ===")
-        count_court = await search(page, COURT_IDX, DT_NAME, TEST_DATE)
-        p(f"ערכאה {COURT_IDX}: {count_court} תוצאות {'← מוגבל!' if count_court >= 100 else ''}")
-
-        if count_court < 100:
-            p("פחות מ-100, אין צורך בפיצול לפי שופטים. נסה ערכאה אחרת.")
+        if count_all < 100:
+            p("פחות מ-100 — אין צורך בפיצול")
             await browser.close()
             return
 
-        # ── שלב 4: חיפוש לפי כל שופט בנפרד ─────────────────
-        print(f"\n=== שלב 4: פיצול לפי שופטים ({len(judge_opts)-1} שופטים) ===")
+        # ── שלב 2: מצא ערכאה עם 100+ ────────────────────────
+        print(f"\n=== שלב 2: סריקת ערכאות למציאת אחת עם 100+ ===")
+        target_court_idx  = None
+        target_court_name = None
+        target_judge_opts = []
+
+        for cidx in range(1, len(court_opts)):
+            cname = court_opts[cidx][1]
+            c, j_opts = await search(page, cidx, DT_NAME, TEST_DATE)
+            sym = " ← מוגבל!" if c >= 100 else ""
+            p(f"ערכאה {cidx:3d} ({cname}): {c}{sym}")
+            if c >= 100 and len(j_opts) > 1:
+                target_court_idx  = cidx
+                target_court_name = cname
+                target_judge_opts = j_opts
+                p(f"  → בחרנו ערכאה זו ({len(j_opts)-1} שופטים)")
+                break
+
+        if target_court_idx is None:
+            p("לא נמצאה ערכאה עם 100+ ושופטים — נסה תאריך/סוג מסמך אחר")
+            await browser.close()
+            return
+
+        # ── שלב 3: פיצול לפי שופטים ─────────────────────────
+        print(f"\n=== שלב 3: פיצול ערכאה {target_court_idx} ({target_court_name}) לפי שופטים ===")
         total = 0
-        for jidx in range(1, len(judge_opts)):
-            jname = judge_opts[jidx][1]
-            c = await search(page, COURT_IDX, DT_NAME, TEST_DATE, judge_idx=jidx)
+        for jidx in range(1, len(target_judge_opts)):
+            jname = target_judge_opts[jidx][1]
+            c, _ = await search(page, target_court_idx, DT_NAME, TEST_DATE, judge_idx=jidx)
             if c == 0:
                 p(f"שופט {jidx:3d} ({jname}): 0")
                 continue
-            capped = " ← מוגבל! (100 בלבד)" if c >= 100 else ""
+            capped = " ← מוגבל!" if c >= 100 else ""
             p(f"שופט {jidx:3d} ({jname}): {c}{capped}")
             total += c
 
-        p(f"\nסה\"כ לפי שופטים: {total}")
-        p(f"(ערכאה ללא פיצול: {count_court})")
+        p(f"\nסה\"כ: {total}")
 
         print("\n=== סיום — הדפדפן נשאר פתוח 30 שניות ===")
         await page.wait_for_timeout(30000)
