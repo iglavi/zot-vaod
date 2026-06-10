@@ -253,8 +253,8 @@ async def do_search(page, court_idx: int, dt_name: str,
     await set_date_picker(page, "LocateByParameters1_dateFrom", from_date)
     await set_date_picker(page, "LocateByParameters1_DateTo", to_date)
 
-    # force=True — עוקף מצבים שבהם הכפתור חסום ב-navigation ומונע timeout
-    await page.locator("#ButtonsGroup1_btnLocate").click(force=True)
+    # JS click — לא מחכה ל-navigation, מונע timeout כשהאתר איטי
+    await page.evaluate("document.getElementById('ButtonsGroup1_btnLocate').click()")
     try:
         await page.locator(".ag-row").first.wait_for(timeout=10000)
     except Exception:
