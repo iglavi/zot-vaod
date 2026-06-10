@@ -91,17 +91,22 @@ def allow_sleep():
 # ── progress ─────────────────────────────────────────────
 
 def load_progress() -> set:
-    if PROGRESS_FILE.exists():
-        data = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
-        return set(data.get("done", []))
+    if PROGRESS_FILE.exists() and PROGRESS_FILE.stat().st_size > 0:
+        try:
+            data = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+            return set(data.get("done", []))
+        except (json.JSONDecodeError, Exception):
+            log(f"  אזהרה — progress.json פגום, מתחיל מחדש")
     return set()
 
 
 def save_progress(done: set):
-    PROGRESS_FILE.write_text(
+    tmp = PROGRESS_FILE.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps({"done": sorted(done)}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    tmp.replace(PROGRESS_FILE)
 
 
 def progress_key(*parts) -> str:
