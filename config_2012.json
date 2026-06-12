@@ -1,0 +1,14 @@
+{
+  "date_from": "2012-01-01",
+  "date_to": "2012-12-31",
+  "output_dir": "D:\\Giluy_Naot\\2012",
+  "metadata_file": "metadata.csv",
+  "progress_file": "progress.json",
+  "log_file": "log.txt",
+  "decision_types": [
+    "פסק דין",
+    "גזר דין",
+    "הכרעת דין"
+  ],
+  "headless": true
+}
