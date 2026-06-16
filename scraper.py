@@ -489,7 +489,7 @@ async def scrape_range(page, court_idx: int, dt_name: str,
                                    depth=depth + 1)
                 await asyncio.sleep(random.uniform(0.5, 1.5))
         else:
-            log(f"{indent}  [רשת ביטחון] לא ניתן לחלק יותר — מוריד 100 תוצאות")
+            log(f"{indent}  **יותר ממאה תוצאות לאחר פילטור אחרון! תוצאות חלקיות!**", is_error=True)
             await process_results(page)
         return
 
