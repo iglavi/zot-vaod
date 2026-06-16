@@ -580,9 +580,13 @@ async def main():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=HEADLESS)
+        # שני context נפרדים (לא שני pages באותו context) — האתר משתמש ב-session
+        # צד-שרת, וטאבים שחולקים context חולקים גם session, מה שמבלבל את השרת
+        # כששני חיפושים רצים במקביל (שני הטאבים "רואים" את אותן תוצאות).
         context = await browser.new_context(accept_downloads=True, user_agent=ua)
+        context2 = await browser.new_context(accept_downloads=True, user_agent=ua)
         page = await context.new_page()
-        page2 = await context.new_page()
+        page2 = await context2.new_page()
 
         try:
             if not court_names:
