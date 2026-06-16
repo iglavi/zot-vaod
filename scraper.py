@@ -508,7 +508,23 @@ async def scrape_range(page, court_idx: int, dt_name: str,
 # אם יש פחות מ-100 — מסיימים בחיפוש אחד.
 # אם יש 100+ — יורדים לחיפוש לפי ערכאה בנפרד.
 
-async def scrape_day(page, dt_name: str, day: date,
+async def scrape_courts_subset(page, dt_name: str, day: date,
+                               court_names: list[str], court_indices: list[int],
+                               tag: str):
+    """עובר על תת-קבוצה של ערכאות בדף נתון. שגיאה בערכאה בודדת לא מפסיקה את התת-קבוצה."""
+    for court_idx in court_indices:
+        court_name = court_names[court_idx]
+        if any(court_name.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        log(f"    [{tag}] ערכאה {court_idx}: {court_name}")
+        try:
+            await scrape_range(page, court_idx, dt_name, day, day)
+        except Exception as e:
+            log(f"    [{tag}] שגיאה בערכאה {court_idx} ({court_name}): {e}", is_error=True)
+        await asyncio.sleep(random.uniform(0.8, 2))
+
+
+async def scrape_day(page, page2, dt_name: str, day: date,
                      court_names: list[str], num_courts: int):
     day_str = date_to_str(day)
 
@@ -526,14 +542,17 @@ async def scrape_day(page, dt_name: str, day: date,
         return
 
     # ── שלב 2: רשת ביטחון — יש 100+, יורדים לפי ערכאה ───
-    log(f"  [{dt_name}] {day_str} — 100+ תוצאות, מחפש לפי ערכאה...")
-    for court_idx in range(1, num_courts):
-        court_name = court_names[court_idx]
-        if any(court_name.startswith(p) for p in SKIP_PREFIXES):
-            continue
-        log(f"    ערכאה {court_idx}: {court_name}")
-        await scrape_range(page, court_idx, dt_name, day, day)
-        await asyncio.sleep(random.uniform(0.8, 2))
+    # מפצלים את רשימת הערכאות לשני חלקים ומריצים שני טאבים במקביל.
+    log(f"  [{dt_name}] {day_str} — 100+ תוצאות, מחפש לפי ערכאה (2 טאבים במקביל)...")
+    court_indices = list(range(1, num_courts))
+    half = len(court_indices) // 2
+    first_half, second_half = court_indices[:half], court_indices[half:]
+
+    await asyncio.gather(
+        scrape_courts_subset(page, dt_name, day, court_names, first_half, "טאב 1"),
+        scrape_courts_subset(page2, dt_name, day, court_names, second_half, "טאב 2"),
+        return_exceptions=True,
+    )
 
 
 # ── main ──────────────────────────────────────────────────
@@ -563,6 +582,7 @@ async def main():
         browser = await p.chromium.launch(headless=HEADLESS)
         context = await browser.new_context(accept_downloads=True, user_agent=ua)
         page = await context.new_page()
+        page2 = await context.new_page()
 
         try:
             if not court_names:
@@ -600,7 +620,7 @@ async def main():
                     # retry עד 3 פעמים אם האתר timeout
                     for attempt in range(1, 4):
                         try:
-                            await scrape_day(page, dt_name, current_d, court_names, num_courts)
+                            await scrape_day(page, page2, dt_name, current_d, court_names, num_courts)
                             break
                         except Exception as e:
                             err = str(e)
