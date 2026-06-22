@@ -291,7 +291,7 @@ async def get_result_count(page) -> tuple[int, bool]:
 
 async def export_page_csv(page) -> list[dict]:
     try:
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tf:
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, dir=OUTPUT_DIR) as tf:
             tmp = Path(tf.name)
         if await page.locator(".ag-row").count() == 0:
             return []
