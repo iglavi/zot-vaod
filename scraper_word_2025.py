@@ -564,36 +564,26 @@ async def download_one_docx(page, row_idx: int, local_page_idx: int, dest: Path)
     finally:
         page.remove_listener("dialog", _accept_dialog)
 
+ROWS_PER_PAGE = 18  # ag-grid מציג 18 שורות בכל עמוד, row-index מתאפס לאפס בכל עמוד
+
 async def download_all_in_results(page, csv_rows: list[dict], done_dl: set[str]):
     """
-    מוריד DOCX לכל שורה בתוצאות, עמוד אחרי עמוד.
-    ה-ag-grid מציג ~18 שורות בעמוד; שורות מחוץ לעמוד הנוכחי אינן ב-DOM.
+    מוריד DOCX לכל שורה, עמוד אחרי עמוד — בדיוק כגישת תמיר:
+    - row-index מתאפס ל-0 בכל עמוד (לא גלובלי)
+    - 2-4 שניות המתנה לפני כל הורדה
+    - פירוק ל-chunks של ROWS_PER_PAGE
     """
     total = len(csv_rows)
     if total == 0:
         return
 
-    # בונה מפת row_index → נתוני CSV (נניח שסדר ה-CSV = סדר השורות בגריד)
-    rows_by_idx = {i: csv_rows[i] for i in range(total)}
+    pages = [csv_rows[i:i + ROWS_PER_PAGE] for i in range(0, total, ROWS_PER_PAGE)]
+    total_pages = len(pages)
 
-    page_num = 0
-    while True:
-        # קורא אילו row-index קיימים כרגע ב-DOM
-        visible_indices = await page.evaluate("""
-            () => [...document.querySelectorAll('.ag-row')]
-                    .map(r => parseInt(r.getAttribute('row-index') || '-1'))
-                    .filter(i => i >= 0)
-                    .sort((a, b) => a - b)
-        """)
+    for page_num, page_rows in enumerate(pages, 1):
+        log(f"    דף תוצאות {page_num}/{total_pages} ({len(page_rows)} שורות)")
 
-        if not visible_indices:
-            break
-
-        for local_page_idx, row_idx in enumerate(visible_indices):
-            row = rows_by_idx.get(row_idx)
-            if row is None:
-                continue
-
+        for i, row in enumerate(page_rows):
             case_num = str(row.get("מספר תיק", "")).strip()
             date_raw = str(row.get("תאריך מתן החלטה", "")).strip()
             if not case_num:
@@ -610,21 +600,26 @@ async def download_all_in_results(page, csv_rows: list[dict], done_dl: set[str])
                 save_progress(PROGRESS_DL, done_dl)
                 continue
 
-            ok = await download_one_docx(page, row_idx, local_page_idx, dest)
+            # המתנה לפני ההורדה — כמו בקוד של תמיר
+            await asyncio.sleep(random.uniform(2, 4))
+
+            # i = מיקום בתוך העמוד הנוכחי (0-17), row-index מתאפס בכל עמוד
+            ok = await download_one_docx(page, i, i, dest)
+            global_idx = (page_num - 1) * ROWS_PER_PAGE + i + 1
             if ok:
-                log(f"      ✓ [{row_idx}] {case_num} → {dest.name}")
+                log(f"      ✓ [{global_idx}/{total}] {case_num} → {dest.name}")
                 done_dl.add(pk)
                 _state.downloaded += 1
                 save_progress(PROGRESS_DL, done_dl)
             else:
+                log(f"      ✗ [{global_idx}/{total}] {case_num}")
                 _state.dl_errors += 1
 
-            await page.wait_for_timeout(300)
-
-        # מנסה לעבור לעמוד הבא
-        if not await go_next_page(page):
-            break
-        page_num += 1
+        # עמוד הבא
+        if page_num < total_pages:
+            if not await go_next_page(page):
+                log(f"    ← לא הצלחנו לעבור לעמוד {page_num + 1}")
+                break
 
 
 # ── עיבוד batch ──────────────────────────────────────────────
