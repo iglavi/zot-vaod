@@ -189,6 +189,18 @@ class NgcsSession:
         r.raise_for_status()
         self._search_form_html = decode_text(r)
 
+    def _autopostback_court(self, court_id: str):
+        """מדמה את ה-AutoPostBack שמופעל כשבוחרים ערכאה ב-dropdown.
+        מחזיר HTML מעודכן עם ViewState שמכיר את בחירת הערכאה."""
+        fields = parse_form_fields(self._search_form_html)
+        fields["hdnSelectedTab"]                          = "1"
+        fields["LocateByParameters1:ddlSelectCourt"]     = court_id
+        fields["__EVENTTARGET"]                          = "LocateByParameters1:ddlSelectCourt"
+        fields["__EVENTARGUMENT"]                        = ""
+        r = self.client.post(SEARCH_URL, data=fields)
+        r.raise_for_status()
+        return decode_text(r)
+
     def search(
         self,
         date_str: str,            # DD/MM/YYYY
@@ -196,7 +208,15 @@ class NgcsSession:
         court_id:    str = "-1",  # -1 = כל הערכאות
     ) -> list[dict]:
         self._reload_search_form()
-        fields = parse_form_fields(self._search_form_html)
+
+        # כשמסננים לפי ערכאה ספציפית — נדרש AutoPostBack תחילה
+        # כדי שה-ViewState יכיר את בחירת הערכאה
+        if court_id != "-1":
+            form_html = self._autopostback_court(court_id)
+        else:
+            form_html = self._search_form_html
+
+        fields = parse_form_fields(form_html)
         fields["hdnSelectedTab"]                              = "1"
         fields["LocateByParameters1:ddlSelectCourt"]         = court_id
         fields["LocateByParameters1:ddlSelectProceeding"]    = "-1"
