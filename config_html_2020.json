@@ -1,0 +1,8 @@
+{
+  "output_dir":      "D:\\Research-bot\\2020",
+  "progress_file":   "D:\\Research-bot\\2020\\progress_html.json",
+  "log_file":        "D:\\Research-bot\\2020\\scraper_html_log.txt",
+  "date_from":       "2020-01-01",
+  "date_to":         "2020-12-31",
+  "decision_types":  ["פסק דין", "גזר דין", "הכרעת דין"]
+}
