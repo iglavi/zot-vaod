@@ -47,7 +47,6 @@ OUTPUT_DIR    = Path(_cfg["output_dir"])
 PROGRESS_FILE = Path(_cfg.get("progress_file", OUTPUT_DIR / "download_progress.json"))
 LOG_FILE      = Path(_cfg.get("log_file",      OUTPUT_DIR / "download_log.txt"))
 YEAR_FILTER   = _cfg.get("year_filter", None)
-WORKERS       = int(_cfg.get("workers", 4))
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +91,18 @@ def save_progress(done: set[str]):
     tmp = PROGRESS_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps({"done": sorted(done)}, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(PROGRESS_FILE)
+
+def with_retry(fn, attempts=3, delay=5):
+    """מריץ fn עד attempts פעמים עם המתנה בין ניסיונות."""
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            log(f"  [retry {attempt+1}/{attempts}] {e} — ממתין {delay}שנ'...")
+            time.sleep(delay)
+            delay *= 2
 
 # ── HTTP helpers ─────────────────────────────────────────────
 def decode_text(response: httpx.Response) -> str:
@@ -285,7 +296,7 @@ def progress_key(date_str: str, case_num: str, document_id: int) -> str:
 # ── לוגיקה ראשית ─────────────────────────────────────────────
 def main():
     log("=" * 60)
-    log(f"downloader.py — שנה: {YEAR_FILTER or 'כל'}, workers: {WORKERS}")
+    log(f"downloader.py — שנה: {YEAR_FILTER or 'כל'}")
 
     done = load_progress()
     log(f"קבצים שכבר הורדו: {len(done)}")
@@ -319,11 +330,10 @@ def main():
         log(f"\n{date_str} | {court_name} ({len(group_rows)} שורות)")
 
         try:
-            results, results_html = sess.search(date_str, court_id)
+            results, results_html = with_retry(lambda: sess.search(date_str, court_id))
         except Exception as e:
             log(f"  שגיאת חיפוש: {e}", error=True)
             stats["errors"] += len(group_rows)
-            time.sleep(5)
             continue
 
         if len(results) == 100:
@@ -360,10 +370,9 @@ def main():
             dest = OUTPUT_DIR / date_str.replace("/", "-") / filename
 
             try:
-                doc_num = sess.get_document_number(results_html, case_id, doc_id)
-                # חיפוש מחדש כדי לרענן את ה-results_html לפתיחת מסמך הבא
-                results, results_html = sess.search(date_str, court_id)
-                pages = sess.download_pdf(doc_num, dest)
+                doc_num = with_retry(lambda: sess.get_document_number(results_html, case_id, doc_id))
+                results, results_html = with_retry(lambda: sess.search(date_str, court_id))
+                pages = with_retry(lambda: sess.download_pdf(doc_num, dest))
                 log(f"  ✓ {case_num} → {dest.name} ({pages} עמ')")
                 done.add(pkey)
                 stats["downloaded"] += 1
