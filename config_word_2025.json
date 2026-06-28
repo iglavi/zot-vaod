@@ -1,0 +1,12 @@
+{
+  "date_from":       "2025-01-01",
+  "date_to":         "2025-12-31",
+  "output_dir":      "D:\\Research-bot\\2025",
+  "docx_dir":        "D:\\Research-bot\\2025\\docx",
+  "metadata_file":   "metadata.csv",
+  "progress_scrape": "progress_scrape.json",
+  "progress_download": "progress_download.json",
+  "log_file":        "scraper_word_log.txt",
+  "headless":        false,
+  "decision_types":  ["פסק דין", "גזר דין", "הכרעת דין"]
+}
