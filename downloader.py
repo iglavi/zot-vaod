@@ -160,7 +160,7 @@ class NgcsSession:
     def __init__(self):
         self.client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=60)
         self.court_map: dict[str, str] = {}
-        self._search_html: str = ""
+        self._search_form_html: str = ""  # דף החיפוש המקורי — לא מוחלף אחרי חיפוש
 
     def close(self):
         self.client.close()
@@ -174,13 +174,24 @@ class NgcsSession:
         fields["__EVENTARGUMENT"] = ""
         r = self.client.post(HOME_URL, data=fields)
         r.raise_for_status()
-        self._search_html = decode_text(r)
-        self.court_map = get_court_options(self._search_html)
+        self._search_form_html = decode_text(r)
+        self.court_map = get_court_options(self._search_form_html)
         log(f"נטענו {len(self.court_map)} ערכאות")
+
+    def _reload_search_form(self):
+        """טוען מחדש את דף החיפוש כדי לרענן ViewState"""
+        r = self.client.get(HOME_URL)
+        r.raise_for_status()
+        fields = parse_form_fields(decode_text(r))
+        fields["__EVENTTARGET"] = "Header1$UpperMenu1$btnVerdictLocalization"
+        fields["__EVENTARGUMENT"] = ""
+        r = self.client.post(HOME_URL, data=fields)
+        r.raise_for_status()
+        self._search_form_html = decode_text(r)
 
     def search(self, date_str: str, court_id: str) -> tuple[list[dict], str]:
         """חיפוש לפי תאריך וערכאה. date_str בפורמט DD/MM/YYYY"""
-        fields = parse_form_fields(self._search_html)
+        fields = parse_form_fields(self._search_form_html)
         fields["hdnSelectedTab"] = "1"
         fields["LocateByParameters1:ddlSelectCourt"] = court_id
         fields["LocateByParameters1:ddlSelectProceeding"] = "-1"
@@ -194,8 +205,8 @@ class NgcsSession:
         r = self.client.post(SEARCH_URL, data=fields)
         r.raise_for_status()
         html = decode_text(r)
-        # שמור לשימוש בפתיחת מסמכים
-        self._search_html = html
+        # טוען מחדש את טופס החיפוש לקראת החיפוש הבא
+        self._reload_search_form()
         return parse_results(html), html
 
     def get_document_number(self, results_html: str, case_id: int, document_id: int) -> str:
