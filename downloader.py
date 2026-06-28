@@ -191,6 +191,8 @@ class NgcsSession:
 
     def search(self, date_str: str, court_id: str) -> tuple[list[dict], str]:
         """חיפוש לפי תאריך וערכאה. date_str בפורמט DD/MM/YYYY"""
+        # טוען מחדש את טופס החיפוש תחילה — מבטיח ViewState תקף
+        self._reload_search_form()
         fields = parse_form_fields(self._search_form_html)
         fields["hdnSelectedTab"] = "1"
         fields["LocateByParameters1:ddlSelectCourt"] = court_id
@@ -205,8 +207,6 @@ class NgcsSession:
         r = self.client.post(SEARCH_URL, data=fields)
         r.raise_for_status()
         html = decode_text(r)
-        # טוען מחדש את טופס החיפוש לקראת החיפוש הבא
-        self._reload_search_form()
         return parse_results(html), html
 
     def get_document_number(self, results_html: str, case_id: int, document_id: int) -> str:
