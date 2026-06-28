@@ -507,23 +507,62 @@ async def go_next_page(page) -> bool:
 async def download_one_docx(page, row_idx: int, local_page_idx: int, dest: Path) -> bool:
     """מסמן שורה, מוריד DOCX, מבטל סימון. local_page_idx = מיקום בדף הנוכחי (0-based)."""
     await dismiss_ndc_popup(page)
-    await uncheck_all(page)  # ניקוי מהורדה קודמת
+    await uncheck_all(page)
 
-    if not await click_checkbox(page, row_idx, local_page_idx):
+    # ── בדיקה: האם כפתור ההורדה קיים ונגיש? ──
+    btn_info = await page.evaluate("""
+        () => {
+            const btn = document.getElementById('btnDownloadWordDocs');
+            if (!btn) return {exists: false};
+            const r = btn.getBoundingClientRect();
+            return {
+                exists: true,
+                visible: r.width > 0 && r.height > 0,
+                disabled: btn.disabled || btn.classList.contains('disabled'),
+                text: btn.innerText.trim()
+            };
+        }
+    """)
+    if not btn_info.get("exists"):
+        log(f"      ✗ #btnDownloadWordDocs לא קיים בדף")
         return False
+    if not btn_info.get("visible"):
+        log(f"      ✗ #btnDownloadWordDocs קיים אבל לא גלוי (disabled={btn_info.get('disabled')})")
+        return False
+
+    checked = await click_checkbox(page, row_idx, local_page_idx)
+    log(f"      [debug] row={row_idx} local={local_page_idx} checkbox={'✓' if checked else '✗'} btn='{btn_info.get('text')}'")
+    if not checked:
+        return False
+
+    # ── הורדה עם טיפול ב-dialog ──
+    dialog_accepted = []
+    async def _accept_dialog(dlg):
+        dialog_accepted.append(dlg.message)
+        await dlg.accept()
+    page.on("dialog", _accept_dialog)
+
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         async with page.expect_download(timeout=20000) as dl_info:
             await page.locator("#btnDownloadWordDocs").click()
+            await page.wait_for_timeout(500)
+            # אם קפץ popup — dismiss ונחזה כ-timeout מכוון
+            await dismiss_ndc_popup(page)
         dl = await dl_info.value
         await dl.save_as(str(dest))
         await uncheck_all(page)
         return True
     except Exception as e:
-        log(f"      ✗ שגיאת הורדה: {e}")
+        if dialog_accepted:
+            log(f"      ✗ dialog: {dialog_accepted[0]}")
+        else:
+            log(f"      ✗ שגיאת הורדה: {e!s:.120}")
         await dismiss_ndc_popup(page)
         await uncheck_all(page)
         return False
+    finally:
+        page.remove_listener("dialog", _accept_dialog)
 
 async def download_all_in_results(page, csv_rows: list[dict], done_dl: set[str]):
     """
