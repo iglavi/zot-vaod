@@ -198,16 +198,16 @@ def download_pdf(client: httpx.Client, doc_num: str, dest: Path) -> int:
         return body.get("d", body)
 
     images_data = viewer_post("GetAllImages", {"documentNumber": doc_num})
-    print(f"    DEBUG סוג: {type(images_data)}, אורך: {len(images_data) if isinstance(images_data, (list,str)) else '?'}")
-    if images_data:
-        sample = images_data[0] if isinstance(images_data, list) else images_data
-        print(f"    DEBUG פריט ראשון: {str(sample)[:300]}")
     if not isinstance(images_data, list) or not images_data:
         raise RuntimeError("GetAllImages לא החזיר נתונים")
 
     pil_images = []
     for item in images_data:
-        _, encoded = (item if isinstance(item, str) else str(item)).split(",", 1)
+        s = item if isinstance(item, str) else str(item)
+        # ה-API מחזיר <img src='data:image/...;base64,...'>
+        match = re.search(r"src=['\"]([^'\"]+)['\"]", s)
+        data_url = match.group(1) if match else s
+        _, encoded = data_url.split(",", 1)
         encoded += "=" * (-len(encoded) % 4)
         pil_images.append(Image.open(io.BytesIO(base64.b64decode(encoded))))
 
