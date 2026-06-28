@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import csv
 import html as html_lib
@@ -27,10 +26,9 @@ import re
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from urllib.parse import parse_qs, urljoin, urlparse
 
 try:
     import httpx
@@ -52,6 +50,8 @@ YEAR_FILTER   = _cfg.get("year_filter", None)
 WORKERS       = int(_cfg.get("workers", 4))
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # ── URL-ים ──────────────────────────────────────────────────
 BASE_URL   = "https://www.court.gov.il/NGCS.Web.Site"
@@ -193,13 +193,11 @@ class NgcsSession:
         fields["__EVENTARGUMENT"] = f"{case_id}&{document_id}&1"
         soup = BeautifulSoup(results_html, "html.parser")
         form = soup.find("form", {"id": "Form1"}) or soup.find("form", {"name": "Form1"})
-        from urllib.parse import urljoin, parse_qs, urlparse
         action = urljoin(OUTPUT_URL, form.get("action") if form else "")
         r = self.client.post(action or OUTPUT_URL, data=fields)
         r.raise_for_status()
         html = decode_text(r)
         final_url = str(r.url)
-        from urllib.parse import parse_qs, urlparse
         query = parse_qs(urlparse(final_url).query)
         doc_num = (query.get("DocumentNumber") or [None])[0]
         if not doc_num:
@@ -307,7 +305,11 @@ def main():
 
     stats = {"downloaded": 0, "skipped": 0, "not_found": 0, "errors": 0}
 
-    for (date_str, court_name), group_rows in sorted(groups.items()):
+    def sort_key(item):
+        ds = item[0][0]  # DD/MM/YYYY
+        return datetime.strptime(ds, "%d/%m/%Y"), item[0][1]
+
+    for (date_str, court_name), group_rows in sorted(groups.items(), key=sort_key):
         court_id = sess.court_map.get(court_name)
         if not court_id:
             log(f"  ⚠ לא נמצא court_id עבור '{court_name}' — דילוג על {len(group_rows)} שורות", error=True)
