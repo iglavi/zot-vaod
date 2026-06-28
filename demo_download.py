@@ -198,6 +198,10 @@ def download_pdf(client: httpx.Client, doc_num: str, dest: Path) -> int:
         return body.get("d", body)
 
     images_data = viewer_post("GetAllImages", {"documentNumber": doc_num})
+    print(f"    DEBUG סוג: {type(images_data)}, אורך: {len(images_data) if isinstance(images_data, (list,str)) else '?'}")
+    if images_data:
+        sample = images_data[0] if isinstance(images_data, list) else images_data
+        print(f"    DEBUG פריט ראשון: {str(sample)[:300]}")
     if not isinstance(images_data, list) or not images_data:
         raise RuntimeError("GetAllImages לא החזיר נתונים")
 
