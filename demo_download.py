@@ -204,6 +204,7 @@ def download_pdf(client: httpx.Client, doc_num: str, dest: Path) -> int:
     pil_images = []
     for item in images_data:
         _, encoded = (item if isinstance(item, str) else str(item)).split(",", 1)
+        encoded += "=" * (-len(encoded) % 4)
         pil_images.append(Image.open(io.BytesIO(base64.b64decode(encoded))))
 
     dest.parent.mkdir(parents=True, exist_ok=True)
