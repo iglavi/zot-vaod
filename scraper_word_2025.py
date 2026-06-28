@@ -466,9 +466,50 @@ async def click_checkbox(page, row_idx: int, local_idx: int) -> bool:
         """)
     return bool(checked)
 
-async def download_one_docx(page, row_idx: int, local_idx: int, dest: Path) -> bool:
+async def uncheck_all(page):
+    """מבטל סימון כל ה-checkboxes — מונע הצטברות בין הורדות."""
+    try:
+        await page.evaluate("""
+            () => {
+                [...document.querySelectorAll('input[type=checkbox]')].forEach(cb => {
+                    if (cb.checked &&
+                        !cb.parentElement?.parentElement?.className
+                            .includes('ag-header-select-all')) {
+                        cb.click();
+                    }
+                });
+            }
+        """)
+        await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+async def go_next_page(page) -> bool:
+    """מנווט לעמוד הבא ב-ag-grid. מחזיר True אם הצליח."""
+    try:
+        moved = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('[ref="btNext"]');
+                if (!btn) return false;
+                if (btn.getAttribute('aria-disabled') === 'true') return false;
+                const inner = btn.querySelector('button');
+                (inner || btn).click();
+                return true;
+            }
+        """)
+        if moved:
+            await page.wait_for_timeout(1500)
+            return True
+    except Exception:
+        pass
+    return False
+
+async def download_one_docx(page, row_idx: int, local_page_idx: int, dest: Path) -> bool:
+    """מסמן שורה, מוריד DOCX, מבטל סימון. local_page_idx = מיקום בדף הנוכחי (0-based)."""
     await dismiss_ndc_popup(page)
-    if not await click_checkbox(page, row_idx, local_idx):
+    await uncheck_all(page)  # ניקוי מהורדה קודמת
+
+    if not await click_checkbox(page, row_idx, local_page_idx):
         return False
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -476,41 +517,75 @@ async def download_one_docx(page, row_idx: int, local_idx: int, dest: Path) -> b
             await page.locator("#btnDownloadWordDocs").click()
         dl = await dl_info.value
         await dl.save_as(str(dest))
+        await uncheck_all(page)
         return True
     except Exception as e:
         log(f"      ✗ שגיאת הורדה: {e}")
         await dismiss_ndc_popup(page)
+        await uncheck_all(page)
         return False
 
-async def download_all_in_results(page, csv_rows: list[dict],
-                                   done_dl: set[str]):
-    """לכל שורה בתוצאות: מוריד DOCX אם עדיין לא הורד."""
-    for local_idx, row in enumerate(csv_rows):
-        case_num = str(row.get("מספר תיק", "")).strip()
-        date_raw = str(row.get("תאריך מתן החלטה", "")).strip()
-        if not case_num:
-            continue
+async def download_all_in_results(page, csv_rows: list[dict], done_dl: set[str]):
+    """
+    מוריד DOCX לכל שורה בתוצאות, עמוד אחרי עמוד.
+    ה-ag-grid מציג ~18 שורות בעמוד; שורות מחוץ לעמוד הנוכחי אינן ב-DOM.
+    """
+    total = len(csv_rows)
+    if total == 0:
+        return
 
-        pk = pkey(date_raw, case_num)
-        if pk in done_dl:
-            continue
+    # בונה מפת row_index → נתוני CSV (נניח שסדר ה-CSV = סדר השורות בגריד)
+    rows_by_idx = {i: csv_rows[i] for i in range(total)}
 
-        date_folder = extract_date_str(date_raw)
-        dest = DOCX_DIR / date_folder / f"{safe_name(case_num)}.docx"
-        if dest.exists():
-            done_dl.add(pk)
-            continue
+    page_num = 0
+    while True:
+        # קורא אילו row-index קיימים כרגע ב-DOM
+        visible_indices = await page.evaluate("""
+            () => [...document.querySelectorAll('.ag-row')]
+                    .map(r => parseInt(r.getAttribute('row-index') || '-1'))
+                    .filter(i => i >= 0)
+                    .sort((a, b) => a - b)
+        """)
 
-        ok = await download_one_docx(page, local_idx, local_idx, dest)
-        if ok:
-            log(f"      ✓ {case_num} → {dest.name}")
-            done_dl.add(pk)
-            _state.downloaded += 1
-            save_progress(PROGRESS_DL, done_dl)
-        else:
-            _state.dl_errors += 1
+        if not visible_indices:
+            break
 
-        await page.wait_for_timeout(300)
+        for local_page_idx, row_idx in enumerate(visible_indices):
+            row = rows_by_idx.get(row_idx)
+            if row is None:
+                continue
+
+            case_num = str(row.get("מספר תיק", "")).strip()
+            date_raw = str(row.get("תאריך מתן החלטה", "")).strip()
+            if not case_num:
+                continue
+
+            pk = pkey(date_raw, case_num)
+            if pk in done_dl:
+                continue
+
+            date_folder = extract_date_str(date_raw)
+            dest = DOCX_DIR / date_folder / f"{safe_name(case_num)}.docx"
+            if dest.exists():
+                done_dl.add(pk)
+                save_progress(PROGRESS_DL, done_dl)
+                continue
+
+            ok = await download_one_docx(page, row_idx, local_page_idx, dest)
+            if ok:
+                log(f"      ✓ [{row_idx}] {case_num} → {dest.name}")
+                done_dl.add(pk)
+                _state.downloaded += 1
+                save_progress(PROGRESS_DL, done_dl)
+            else:
+                _state.dl_errors += 1
+
+            await page.wait_for_timeout(300)
+
+        # מנסה לעבור לעמוד הבא
+        if not await go_next_page(page):
+            break
+        page_num += 1
 
 
 # ── עיבוד batch ──────────────────────────────────────────────
