@@ -1,0 +1,8 @@
+{
+  "metadata_file": "D:\\Research-bot\\2020\\metadata.csv",
+  "output_dir":    "D:\\Research-bot\\2020\\docx",
+  "progress_file": "D:\\Research-bot\\2020\\progress_word.json",
+  "log_file":      "D:\\Research-bot\\2020\\downloader_word_log.txt",
+  "year_filter":   2020,
+  "headless":      false
+}
