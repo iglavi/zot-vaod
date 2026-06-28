@@ -467,19 +467,32 @@ async def click_checkbox(page, row_idx: int, local_idx: int) -> bool:
     return bool(checked)
 
 async def uncheck_all(page):
-    """מבטל סימון כל ה-checkboxes — מונע הצטברות בין הורדות."""
+    """מבטל סימון כל ה-checkboxes — מגלל לראש הגריד ואז מנקה."""
     try:
+        # גלל לראש הגריד כדי לחשוף checkboxes שמחוץ ל-viewport
         await page.evaluate("""
             () => {
-                [...document.querySelectorAll('input[type=checkbox]')].forEach(cb => {
-                    if (cb.checked &&
-                        !cb.parentElement?.parentElement?.className
-                            .includes('ag-header-select-all')) {
-                        cb.click();
-                    }
-                });
+                const vp = document.querySelector('.ag-body-viewport');
+                if (vp) vp.scrollTop = 0;
             }
         """)
+        await page.wait_for_timeout(200)
+        count = await page.evaluate("""
+            () => {
+                const checked = [...document.querySelectorAll('input[type=checkbox]')].filter(cb =>
+                    cb.checked &&
+                    !cb.parentElement?.parentElement?.className.includes('ag-header-select-all')
+                );
+                checked.forEach(cb => {
+                    cb.checked = false;
+                    cb.dispatchEvent(new Event('change', {bubbles: true}));
+                    cb.dispatchEvent(new Event('click',  {bubbles: true}));
+                });
+                return checked.length;
+            }
+        """)
+        if count:
+            log(f"      [uncheck] ביטל {count} checkboxes")
         await page.wait_for_timeout(300)
     except Exception:
         pass
