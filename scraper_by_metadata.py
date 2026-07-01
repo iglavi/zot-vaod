@@ -388,47 +388,89 @@ async def _fill_input_near_label(page, label_contains: str, value: str, field_in
     return False
 
 
+async def _dump_radios(page):
+    """דיבוג: מדפיס את כל ה-radio buttons בדף עם הטקסט הסמוך להם."""
+    try:
+        info = await page.evaluate("""
+            () => {
+                const radios = [...document.querySelectorAll('input[type=radio]')];
+                return radios.map(r => {
+                    let text = '';
+                    // label עם for
+                    if (r.id) {
+                        const lbl = document.querySelector(`label[for="${r.id}"]`);
+                        if (lbl) text = lbl.innerText.trim();
+                    }
+                    if (!text) {
+                        const parent = r.closest('td, label, span, div');
+                        if (parent) text = parent.innerText.trim().slice(0, 40);
+                    }
+                    if (!text && r.parentElement) text = r.parentElement.innerText.trim().slice(0, 40);
+                    return {id: r.id, name: r.name, value: r.value, checked: r.checked, text};
+                });
+            }
+        """)
+        log(f"    [radio-dump] {info}")
+    except Exception as e:
+        log(f"    [radio-dump] שגיאה: {e}")
+
+
 async def _click_radio_by_label(page, label_text: str) -> bool:
-    """לוחץ על radio button לפי טקסט label סמוך."""
+    """לוחץ על radio button לפי טקסט label סמוך, name/id, או value."""
     try:
         clicked = await page.evaluate(f"""
             () => {{
-                // מנסה label עם for attribute
+                const target = '{label_text}';
+                // 1. label[for] מתאים
                 const labels = [...document.querySelectorAll('label')];
-                let lbl = labels.find(l => l.innerText.trim() === '{label_text}');
-                if (lbl) {{ lbl.click(); return true; }}
-                // מנסה span/td סמוך ל-radio
+                let lbl = labels.find(l => l.innerText.trim() === target || l.innerText.trim().includes(target));
+                if (lbl) {{
+                    let radio = null;
+                    if (lbl.htmlFor) radio = document.getElementById(lbl.htmlFor);
+                    if (!radio) radio = lbl.querySelector('input[type=radio]');
+                    if (radio) {{
+                        radio.checked = true;
+                        radio.click();
+                        radio.dispatchEvent(new Event('change', {{bubbles: true}}));
+                        radio.dispatchEvent(new Event('click', {{bubbles: true}}));
+                        return {{ok: true, method: 'label-for'}};
+                    }}
+                    lbl.click();
+                    return {{ok: true, method: 'label-click'}};
+                }}
+                // 2. radio עם name/id/value מכיל את הטקסט (לפעמים ASP.NET משתמש ב-id כמו rbOldCase)
                 const radios = [...document.querySelectorAll('input[type=radio]')];
                 for (const r of radios) {{
                     const parent = r.closest('td, label, span, div');
-                    if (parent && parent.innerText.includes('{label_text}')) {{
+                    const parentText = parent ? parent.innerText.trim() : '';
+                    if (parentText.includes(target)) {{
+                        r.checked = true;
                         r.click();
                         r.dispatchEvent(new Event('change', {{bubbles: true}}));
-                        return true;
+                        return {{ok: true, method: 'parent-text', parentText}};
                     }}
-                    // בדיקת sibling טקסט
                     let sib = r.nextSibling;
-                    while (sib) {{
-                        if (sib.nodeType === 3 && sib.textContent.trim().includes('{label_text}')) {{
+                    let hops = 0;
+                    while (sib && hops < 5) {{
+                        const t = sib.nodeType === 3 ? sib.textContent : (sib.innerText || '');
+                        if (t && t.trim().includes(target)) {{
+                            r.checked = true;
                             r.click();
                             r.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            return true;
-                        }}
-                        if (sib.nodeType === 1 && sib.innerText && sib.innerText.includes('{label_text}')) {{
-                            r.click();
-                            r.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            return true;
+                            return {{ok: true, method: 'sibling-text'}};
                         }}
                         sib = sib.nextSibling;
+                        hops++;
                     }}
                 }}
-                return false;
+                return {{ok: false}};
             }}
         """)
-        if clicked:
+        if clicked.get("ok"):
             await page.wait_for_timeout(500)
             return True
         log(f"    [radio] לא מצאתי '{label_text}'", is_error=True)
+        await _dump_radios(page)
     except Exception as e:
         log(f"    [radio] שגיאה: {e}", is_error=True)
     return False
