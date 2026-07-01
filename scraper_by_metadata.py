@@ -388,6 +388,26 @@ async def _fill_input_near_label(page, label_contains: str, value: str, field_in
     return False
 
 
+RADIO_ID_HINTS = {
+    "תיק ישן":  "OldCaseIdentifierOptionBoxVT",
+    "תיק חדש":  "NewCaseIdentifierOptionBoxVT",
+    "בית משפט": "CourtOptionBoxVT",
+    "תעבורה":   "TrafficOptionBoxVT",
+}
+
+async def _click_element_by_id_contains(page, substr: str) -> bool:
+    """לוחץ על האלמנט הראשון שה-id שלו מכיל substr (תבנית ASP.NET קבועה)."""
+    try:
+        loc = page.locator(f"[id*='{substr}']")
+        if await loc.count() > 0:
+            await loc.first.click()
+            await page.wait_for_timeout(600)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 async def _dump_radios(page):
     """דיבוג: מדפיס את כל ה-radio buttons בדף עם הטקסט הסמוך להם."""
     try:
@@ -416,7 +436,10 @@ async def _dump_radios(page):
 
 
 async def _click_radio_by_label(page, label_text: str) -> bool:
-    """לוחץ על radio button לפי טקסט label סמוך, name/id, או value."""
+    """לוחץ על radio button. מנסה קודם לפי id (תבנית ASP.NET קבועה), ואז לפי טקסט סמוך."""
+    hint = RADIO_ID_HINTS.get(label_text)
+    if hint and await _click_element_by_id_contains(page, hint):
+        return True
     try:
         clicked = await page.evaluate(f"""
             () => {{
