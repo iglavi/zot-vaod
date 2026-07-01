@@ -90,8 +90,8 @@ SUG_TIK_MAP: dict[str, str | None] = {
     'תיק לאיתור (תל"א)':                                        'תלא',
     'תובענה ארגונית (בין עובד לארגון עובדים) (תע"א)':           'תעא',
     'דיון מהיר בסמכות שופט (דמ"ש)':                            'דמ',
-    'תיק תעבורה (תת"ע)':                                        None,  # מסלול תעבורה
-    'ערעור על החלטת רשם (ע"ר)':                                 'ערמ',
+    'תיק תעבורה (תת"ע)':                                        None,  # קוד לא ידוע — יידלג עם שגיאה
+    'ערעור על החלטת רשם (ע"ר)':                                 None,  # קוד לא ידוע — יידלג עם שגיאה (לא 'ערמ', זה שייך לער"מ)
 }
 
 EXCEL_MONTHS = {
@@ -332,8 +332,9 @@ async def _click_element_by_id_contains(page, substr: str) -> bool:
             await loc.first.click()
             await page.wait_for_timeout(600)
             return True
-    except Exception:
-        pass
+        log(f"    [id*={substr}] לא נמצא אלמנט", is_error=True)
+    except Exception as e:
+        log(f"    [id*={substr}] שגיאה: {e}", is_error=True)
     return False
 
 
@@ -562,7 +563,9 @@ async def fill_and_search_new_case(page, serial: str, month: str, year: str,
     רק רדיו בית משפט/תעבורה ושני שדות טקסט (מספר תיק, חודש-שנה).
     """
     # "תיק חדש" הוא ברירת המחדל בכל פעם שנכנסים לעמוד, אבל לוחצים בכל זאת ליתר ביטחון
-    await _click_element_by_id_contains(page, RADIO_ID_HINTS["תיק חדש"])
+    if not await _click_element_by_id_contains(page, RADIO_ID_HINTS["תיק חדש"]):
+        log("    ✗ לא הצלחתי ללחוץ על 'תיק חדש'", is_error=True)
+        return False
     await page.wait_for_timeout(300)
 
     radio_id = NEW_TRAFFIC_RADIO_ID if is_traffic_case else NEW_COURT_RADIO_ID
