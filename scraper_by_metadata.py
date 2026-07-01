@@ -198,10 +198,6 @@ def parse_case_number(cn: str) -> dict:
         return {'format': 'unknown', 'serial': cn, 'year': ''}
 
 
-def is_traffic(sug_tik: str) -> bool:
-    return 'תת"ע' in sug_tik or 'תעבורה' in sug_tik
-
-
 # ── נורמליזציה של תאריכים להשוואה ───────────────────────────
 def normalize_date(raw: str) -> str:
     """מחלץ DD/MM/YYYY ומחזיר YYYY-MM-DD לצורך השוואה."""
@@ -537,39 +533,89 @@ async def _click_search_button(page) -> bool:
     return False
 
 
+OLD_COURT_ID    = "PreviousCourtComboBoxVT"
+OLD_CASETYPE_ID = "PreviousCaseTypeComboBoxVT"
+OLD_SERIAL_ID   = "OldCaseNumberTextBoxVT"
+OLD_YEAR_ID     = "OldYearTextBoxVT"
+
+
+async def _select_dropdown_by_id(page, id_substr: str, want_text: str, prefix_match: bool = False) -> bool:
+    """בוחר אופציה ב-select שה-id שלו מכיל id_substr, לפי טקסט מדויק/prefix/includes."""
+    try:
+        result = await page.evaluate(f"""
+            () => {{
+                const sel = document.querySelector("[id*='{id_substr}']");
+                if (!sel) return {{ok: false, reason: 'select not found'}};
+                const opts = [...sel.options];
+                const want = '{want_text}'.trim();
+                let opt;
+                if ({"true" if prefix_match else "false"}) {{
+                    opt = opts.find(o => o.text.split('-')[0].trim() === want);
+                }}
+                if (!opt) opt = opts.find(o => o.text.trim() === want);
+                if (!opt) opt = opts.find(o => o.text.includes(want));
+                if (!opt) return {{ok: false, reason: 'option not found', available: opts.map(o=>o.text).join('|').slice(0,400)}};
+                sel.value = opt.value;
+                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return {{ok: true, selected: opt.text}};
+            }}
+        """)
+        if result.get("ok"):
+            await page.wait_for_timeout(700)
+            return True
+        log(f"    [select#{id_substr}] '{want_text}': {result.get('reason')} | {result.get('available','')[:250]}", is_error=True)
+    except Exception as e:
+        log(f"    [select#{id_substr}] שגיאה: {e}", is_error=True)
+    return False
+
+
+async def _fill_input_by_id(page, id_substr: str, value: str) -> bool:
+    """ממלא input שה-id שלו מכיל id_substr."""
+    try:
+        ok = await page.evaluate(f"""
+            () => {{
+                const el = document.querySelector("[id*='{id_substr}']");
+                if (!el) return false;
+                el.value = '{value}';
+                el.dispatchEvent(new Event('input',  {{bubbles: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return true;
+            }}
+        """)
+        if ok:
+            await page.wait_for_timeout(150)
+            return True
+        log(f"    [input#{id_substr}] לא נמצא", is_error=True)
+    except Exception as e:
+        log(f"    [input#{id_substr}] שגיאה: {e}", is_error=True)
+    return False
+
+
 async def fill_and_search_old_case(page, court: str, sug_tik_code: str | None,
                                     serial: str, year: str,
-                                    is_traffic_case: bool) -> bool:
-    """מלא טופס תיק ישן וחפש."""
-    # שלב 1: לחץ על רדיו "תיק ישן"
+                                    is_supreme: bool) -> bool:
+    """מלא טופס תיק ישן וחפש. אין רדיו תעבורה/בית משפט בטופס הזה — רק דרופדאונים."""
     ok = await _click_radio_by_label(page, "תיק ישן")
     if not ok:
         log("    ✗ לא הצלחתי ללחוץ על 'תיק ישן'", is_error=True)
         return False
-    await page.wait_for_timeout(500)
+    await page.wait_for_timeout(400)
 
-    if is_traffic_case:
-        # תיקי תעבורה — בוחרים "תעבורה" ולא "בית משפט"
-        await _click_radio_by_label(page, "תעבורה")
-    else:
-        # בוחרים ערכאה
-        ok = await _select_dropdown_by_text(page, "בית משפט", court)
+    ok = await _select_dropdown_by_id(page, OLD_COURT_ID, court)
+    if not ok:
+        return False
+
+    if not is_supreme:
+        if not sug_tik_code:
+            log(f"    ✗ אין קוד ידוע לסוג תיק — מדלג", is_error=True)
+            return False
+        ok = await _select_dropdown_by_id(page, OLD_CASETYPE_ID, sug_tik_code, prefix_match=True)
         if not ok:
             return False
-        await page.wait_for_timeout(400)
 
-        # בוחרים סוג תיק (לא לעליון ולתיקים ללא קוד)
-        if sug_tik_code:
-            ok = await _select_dropdown_by_text(page, "סוג תיק", sug_tik_code)
-            if not ok:
-                log(f"    ✗ לא מצאתי קוד '{sug_tik_code}' ב-dropdown סוג תיק", is_error=True)
-                return False
-
-    # ממלאים מספר תיק: שני שדות — serial ו-year
-    # בדרך כלל: שדה שמאלי = serial, שדה ימני = שנה
-    # (לפי צילום מסך: 121263 - 00, כאשר 121263 הוא הקוד ו-00 השנה)
-    ok1 = await _fill_input_near_label(page, "מספר תיק", serial, 0)
-    ok2 = await _fill_input_near_label(page, "מספר תיק", year, 1)
+    year2 = year.strip()[-2:].zfill(2)
+    ok1 = await _fill_input_by_id(page, OLD_YEAR_ID, year2)
+    ok2 = await _fill_input_by_id(page, OLD_SERIAL_ID, serial)
     if not ok1 or not ok2:
         return False
 
@@ -853,21 +899,23 @@ async def process_row(page, row: dict, done_dl: set[str],
         log(f"    ✗ מספר תיק לא מזוהה: {case_num!r}", is_error=True)
         return False
 
-    traffic = is_traffic(sug_tik)
     is_supreme = court in SUPREME_COURT_NAMES
-    sug_tik_code = None if (is_supreme or traffic) else SUG_TIK_MAP.get(sug_tik)
-    if sug_tik_code is None and not is_supreme and not traffic:
+    sug_tik_code = None if is_supreme else SUG_TIK_MAP.get(sug_tik)
+    if not is_supreme:
         if sug_tik not in SUG_TIK_MAP:
             log(f"    ✗ סוג תיק לא במיפוי: {sug_tik!r}", is_error=True)
+            return False
+        if sug_tik_code is None:
+            log(f"    ✗ אין קוד dropdown ידוע לסוג תיק: {sug_tik!r}", is_error=True)
             return False
 
     await asyncio.sleep(random.uniform(1.5, 3.0))
 
     # מילוי טופס וחיפוש
-    if parsed["format"] == "old" or traffic:
+    if parsed["format"] == "old":
         ok = await fill_and_search_old_case(
             page, court, sug_tik_code,
-            parsed["serial"], parsed["year"], traffic,
+            parsed["serial"], parsed["year"], is_supreme,
         )
     else:
         ok = await fill_and_search_new_case(
