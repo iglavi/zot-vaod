@@ -712,35 +712,7 @@ async def get_result_count(page) -> int:
         return 0
 
 
-# ── הורדת DOCX (זהה לסקריפר הקיים) ─────────────────────────
-async def uncheck_all(page):
-    try:
-        await page.evaluate("""
-            () => {
-                const vp = document.querySelector('.ag-body-viewport');
-                if (vp) vp.scrollTop = 0;
-            }
-        """)
-        await page.wait_for_timeout(200)
-        count = await page.evaluate("""
-            () => {
-                const checked = [...document.querySelectorAll('input[type=checkbox]')].filter(cb =>
-                    cb.checked &&
-                    !cb.parentElement?.parentElement?.className.includes('ag-header-select-all')
-                );
-                checked.forEach(cb => {
-                    cb.checked = false;
-                    cb.dispatchEvent(new Event('change', {bubbles: true}));
-                    cb.dispatchEvent(new Event('click',  {bubbles: true}));
-                });
-                return checked.length;
-            }
-        """)
-        if count:
-            log(f"      [uncheck] ביטל {count} checkboxes")
-        await page.wait_for_timeout(300)
-    except Exception:
-        pass
+# ── הורדת DOCX ────────────────────────────────────────────
 
 
 async def click_checkbox(page, row_idx: int) -> bool:
@@ -813,9 +785,12 @@ async def click_checkbox(page, row_idx: int) -> bool:
 
 
 async def download_row_docx(page, row_idx: int, dest: Path) -> bool:
-    """מסמן שורה לפי row_idx ומוריד DOCX."""
+    """
+    מסמן שורה לפי row_idx ומוריד DOCX. בניגוד לסקריפר הישן (שם היה חשוב לנקות
+    checkboxes שהצטברו על גריד תוצאות גדול משותף) — כאן כל שורה היא חיפוש חדש
+    ונפרד, אין הצטברות אפשרית, ולכן אין uncheck_all.
+    """
     await dismiss_ndc_popup(page)
-    await uncheck_all(page)
 
     btn_info = await page.evaluate("""
         () => {
@@ -842,13 +817,13 @@ async def download_row_docx(page, row_idx: int, dest: Path) -> bool:
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        async with page.expect_download(timeout=20000) as dl_info:
+        # timeout גדול — לאתר לוקח עשרות שניות עד שהדיאלוג "האם להוריד כ-Word" מופיע
+        async with page.expect_download(timeout=60000) as dl_info:
             await page.locator("#btnDownloadWordDocs").click()
             await page.wait_for_timeout(500)
             await dismiss_ndc_popup(page)
         dl = await dl_info.value
         await dl.save_as(str(dest))
-        await uncheck_all(page)
         return True
     except Exception as e:
         if dialog_accepted:
@@ -856,7 +831,6 @@ async def download_row_docx(page, row_idx: int, dest: Path) -> bool:
         else:
             log(f"      ✗ שגיאת הורדה: {e!s:.120}")
         await dismiss_ndc_popup(page)
-        await uncheck_all(page)
         return False
     finally:
         page.remove_listener("dialog", _accept_dialog)
