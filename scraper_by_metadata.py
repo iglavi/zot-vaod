@@ -472,15 +472,20 @@ async def _click_search_button(page) -> bool:
     try:
         clicked = await page.evaluate("""
             () => {
-                // מחפש כפתור חיפוש בדף
+                // כפתור "איתור" האמיתי בתחתית טופס 'איתור לפי תיק' — לא כפתור ה-Header (quick search)
+                const exact = document.getElementById('ButtonsGroup1_btnLocate');
+                if (exact) { exact.click(); return exact.id; }
+                // fallback: מחפש כפתור/קישור חיפוש, אבל לא כזה שה-id שלו מכיל 'Header'
                 const candidates = [
-                    ...document.querySelectorAll('input[type=submit], input[type=button], button')
+                    ...document.querySelectorAll('input[type=submit], input[type=button], button, a')
                 ];
                 const btn = candidates.find(b =>
-                    (b.value || b.innerText || '').trim() === 'חפש' ||
-                    (b.value || b.innerText || '').trim() === 'חיפוש' ||
-                    b.id?.includes('btnLocate') || b.id?.includes('btnSearch') ||
-                    b.id?.includes('Search') || b.id?.includes('Locate')
+                    !(b.id || '').includes('Header') && (
+                        (b.value || b.innerText || '').trim() === 'איתור' ||
+                        (b.value || b.innerText || '').trim() === 'חפש' ||
+                        (b.value || b.innerText || '').trim() === 'חיפוש' ||
+                        b.id?.includes('btnLocate') || b.id?.includes('btnSearch')
+                    )
                 );
                 if (btn) { btn.click(); return btn.id || btn.value || 'clicked'; }
                 return null;
