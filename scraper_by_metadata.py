@@ -313,83 +313,16 @@ async def go_back_to_search(page) -> bool:
 
 
 # ── מילוי טופס חיפוש לפי תיק ───────────────────────────────
-async def _select_dropdown_by_text(page, label_contains: str, value: str) -> bool:
-    """בוחר ב-dropdown הסמוך ל-label המכיל label_contains, לפי text או value."""
-    try:
-        result = await page.evaluate(f"""
-            () => {{
-                // מחפש label המכיל את הטקסט
-                const labels = [...document.querySelectorAll('td, th, label, span')];
-                const lbl = labels.find(el => el.innerText && el.innerText.includes('{label_contains}'));
-                if (!lbl) return {{ok: false, reason: 'label not found'}};
-                // מחפש select בסמוך
-                let sel = lbl.parentElement?.querySelector('select');
-                if (!sel) sel = lbl.nextElementSibling?.querySelector('select');
-                if (!sel) sel = lbl.closest('tr')?.querySelector('select');
-                if (!sel) return {{ok: false, reason: 'select not found near label'}};
-                // בוחר לפי value קודם, אחר כך לפי text
-                const opts = [...sel.options];
-                let opt = opts.find(o => o.value === '{value}');
-                if (!opt) opt = opts.find(o => o.text.startsWith('{value}'));
-                if (!opt) opt = opts.find(o => o.text.includes('{value}'));
-                if (!opt) return {{ok: false, reason: `option '{value}' not found`, available: opts.map(o=>o.value+':'+o.text).join('|')}};
-                sel.value = opt.value;
-                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
-                return {{ok: true, selected: opt.text}};
-            }}
-        """)
-        if result.get("ok"):
-            await page.wait_for_timeout(600)
-            return True
-        log(f"    [dropdown] '{label_contains}'→'{value}': {result.get('reason')} | options: {result.get('available','')[:200]}", is_error=True)
-    except Exception as e:
-        log(f"    [dropdown] שגיאה: {e}", is_error=True)
-    return False
-
-
-async def _fill_input_near_label(page, label_contains: str, value: str, field_index: int = 0) -> bool:
-    """ממלא שדה input הסמוך ל-label. field_index = 0 לשדה הראשון, 1 לשדה השני."""
-    try:
-        result = await page.evaluate(f"""
-            () => {{
-                const labels = [...document.querySelectorAll('td, th, label, span')];
-                const lbl = labels.find(el => el.innerText && el.innerText.trim().startsWith('{label_contains}'));
-                if (!lbl) return {{ok: false, reason: 'label not found'}};
-                let inputs = [];
-                // מנסה למצוא inputs בשורה/תא
-                const row = lbl.closest('tr') || lbl.parentElement;
-                if (row) inputs = [...row.querySelectorAll('input[type=text], input:not([type])')];
-                if (inputs.length === 0) {{
-                    let sib = lbl.nextElementSibling;
-                    while (sib && inputs.length === 0) {{
-                        inputs = [...sib.querySelectorAll('input[type=text], input:not([type])')];
-                        if (inputs.length === 0 && (sib.matches('input[type=text]') || sib.matches('input:not([type])'))) inputs = [sib];
-                        sib = sib.nextElementSibling;
-                    }}
-                }}
-                if ({field_index} >= inputs.length) return {{ok: false, reason: `field_index {field_index} out of range ({{}}/{{inputs.length}})`.replace('{{}}',{field_index})}};
-                const inp = inputs[{field_index}];
-                inp.value = '{value}';
-                inp.dispatchEvent(new Event('input',  {{bubbles: true}}));
-                inp.dispatchEvent(new Event('change', {{bubbles: true}}));
-                return {{ok: true, id: inp.id}};
-            }}
-        """)
-        if result.get("ok"):
-            await page.wait_for_timeout(200)
-            return True
-        log(f"    [input] '{label_contains}'[{field_index}]: {result.get('reason')}", is_error=True)
-    except Exception as e:
-        log(f"    [input] שגיאה: {e}", is_error=True)
-    return False
-
-
 RADIO_ID_HINTS = {
-    "תיק ישן":  "OldCaseIdentifierOptionBoxVT",
-    "תיק חדש":  "NewCaseIdentifierOptionBoxVT",
-    "בית משפט": "CourtOptionBoxVT",
-    "תעבורה":   "TrafficOptionBoxVT",
+    "תיק ישן": "OldCaseIdentifierOptionBoxVT",
+    "תיק חדש": "BamaCaseIdentifierOptionBoxVT",
 }
+
+# רדיו "בית משפט"/"תעבורה" בטופס תיק חדש — קבוצת NumeratorGroupTypeVT
+NEW_COURT_RADIO_ID   = "NumeratorGroupTypeVT_Value_eq_1"   # בית משפט
+NEW_TRAFFIC_RADIO_ID = "NumeratorGroupTypeVT_Value_eq_2"   # תעבורה
+NEW_SERIAL_ID    = "BamaCaseNumberTextBoxVT"
+NEW_MONTHYEAR_ID = "BamaMonthYearTextBoxVT"
 
 async def _click_element_by_id_contains(page, substr: str) -> bool:
     """לוחץ על האלמנט הראשון שה-id שלו מכיל substr (תבנית ASP.NET קבועה)."""
@@ -622,19 +555,26 @@ async def fill_and_search_old_case(page, court: str, sug_tik_code: str | None,
     return await _click_search_button(page)
 
 
-async def fill_and_search_new_case(page, court: str, serial: str,
-                                    month: str, year: str) -> bool:
-    """מלא טופס תיק חדש וחפש."""
-    # "תיק חדש" הוא ברירת המחדל — לא צריך ללחוץ עליו
-    # בוחרים רדיו "בית משפט" (לא תעבורה)
-    await _click_radio_by_label(page, "בית משפט")
+async def fill_and_search_new_case(page, serial: str, month: str, year: str,
+                                    is_traffic_case: bool = False) -> bool:
+    """
+    מלא טופס תיק חדש וחפש. אין דרופדאון ערכאה/סוג תיק בטופס הזה —
+    רק רדיו בית משפט/תעבורה ושני שדות טקסט (מספר תיק, חודש-שנה).
+    """
+    # "תיק חדש" הוא ברירת המחדל בכל פעם שנכנסים לעמוד, אבל לוחצים בכל זאת ליתר ביטחון
+    await _click_element_by_id_contains(page, RADIO_ID_HINTS["תיק חדש"])
     await page.wait_for_timeout(300)
 
-    # ממלאים serial
-    ok1 = await _fill_input_near_label(page, "מספר תיק", serial, 0)
-    # ממלאים month-year (פורמט MM-YY)
-    month_year = f"{month.zfill(2)}-{year.zfill(2) if len(year) <= 2 else year[-2:]}"
-    ok2 = await _fill_input_near_label(page, "מספר תיק", month_year, 1)
+    radio_id = NEW_TRAFFIC_RADIO_ID if is_traffic_case else NEW_COURT_RADIO_ID
+    ok = await _click_element_by_id_contains(page, radio_id)
+    if not ok:
+        log(f"    ✗ לא הצלחתי ללחוץ על רדיו {'תעבורה' if is_traffic_case else 'בית משפט'} (תיק חדש)", is_error=True)
+        return False
+    await page.wait_for_timeout(300)
+
+    month_year = f"{month.strip().zfill(2)}-{year.strip()[-2:].zfill(2)}"
+    ok1 = await _fill_input_by_id(page, NEW_MONTHYEAR_ID, month_year)
+    ok2 = await _fill_input_by_id(page, NEW_SERIAL_ID, serial)
     if not ok1 or not ok2:
         return False
 
@@ -919,8 +859,8 @@ async def process_row(page, row: dict, done_dl: set[str],
         )
     else:
         ok = await fill_and_search_new_case(
-            page, court,
-            parsed["serial"], parsed["month"], parsed["year"],
+            page, parsed["serial"], parsed["month"], parsed["year"],
+            is_traffic_case=("תעבורה" in sug_tik or 'תת"ע' in sug_tik),
         )
 
     if not ok:
