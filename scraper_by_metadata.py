@@ -232,6 +232,36 @@ async def dismiss_popup(page):
     except Exception:
         pass
 
+async def dismiss_any_overlay(page) -> bool:
+    """
+    מוצא כל lean_overlay גלוי בפועל (לא רק הראשון ב-DOM) ולוחץ 'אישור' שבתוכו,
+    או לוחץ על ה-overlay עצמו. מטפל בפופאפים כמו 'חובה להזין שנה-חודש'
+    שנשארים פתוחים ותוקעים כל קליק עתידי.
+    """
+    try:
+        clicked = await page.evaluate("""
+            () => {
+                const overlays = [...document.querySelectorAll("[id^='lean_overlay']")];
+                for (const ov of overlays) {
+                    const r = ov.getBoundingClientRect();
+                    const visible = r.width > 0 && r.height > 0 && getComputedStyle(ov).display !== 'none';
+                    if (!visible) continue;
+                    const candidates = [...ov.querySelectorAll('button, input[type=button], a')];
+                    const okBtn = candidates.find(b => (b.value || b.innerText || '').trim() === 'אישור') || candidates[0];
+                    if (okBtn) { okBtn.click(); return true; }
+                    ov.click();
+                    return true;
+                }
+                return false;
+            }
+        """)
+        if clicked:
+            await page.wait_for_timeout(500)
+        return bool(clicked)
+    except Exception:
+        return False
+
+
 async def dismiss_ndc_popup(page):
     for oid in [
         "lean_overlay_MessageLS_NoDocumentChosenToDownload",
@@ -328,11 +358,19 @@ async def _click_element_by_id_contains(page, substr: str) -> bool:
     """לוחץ על האלמנט הראשון שה-id שלו מכיל substr (תבנית ASP.NET קבועה)."""
     try:
         loc = page.locator(f"[id*='{substr}']")
-        if await loc.count() > 0:
-            await loc.first.click()
-            await page.wait_for_timeout(600)
-            return True
-        log(f"    [id*={substr}] לא נמצא אלמנט", is_error=True)
+        if await loc.count() == 0:
+            log(f"    [id*={substr}] לא נמצא אלמנט", is_error=True)
+            return False
+        try:
+            await loc.first.click(timeout=5000)
+        except Exception:
+            # אולי overlay חוסם את הקליק — ננסה לנקות ולנסות שוב פעם אחת
+            if await dismiss_any_overlay(page):
+                await loc.first.click(timeout=5000)
+            else:
+                raise
+        await page.wait_for_timeout(600)
+        return True
     except Exception as e:
         log(f"    [id*={substr}] שגיאה: {e}", is_error=True)
     return False
@@ -529,6 +567,7 @@ async def fill_and_search_old_case(page, court: str, sug_tik_code: str | None,
                                     serial: str, year: str,
                                     is_supreme: bool) -> bool:
     """מלא טופס תיק ישן וחפש. אין רדיו תעבורה/בית משפט בטופס הזה — רק דרופדאונים."""
+    await dismiss_any_overlay(page)
     ok = await _click_radio_by_label(page, "תיק ישן")
     if not ok:
         log("    ✗ לא הצלחתי ללחוץ על 'תיק ישן'", is_error=True)
@@ -562,6 +601,7 @@ async def fill_and_search_new_case(page, serial: str, month: str, year: str,
     מלא טופס תיק חדש וחפש. אין דרופדאון ערכאה/סוג תיק בטופס הזה —
     רק רדיו בית משפט/תעבורה ושני שדות טקסט (מספר תיק, חודש-שנה).
     """
+    await dismiss_any_overlay(page)
     # "תיק חדש" הוא ברירת המחדל בכל פעם שנכנסים לעמוד, אבל לוחצים בכל זאת ליתר ביטחון
     if not await _click_element_by_id_contains(page, RADIO_ID_HINTS["תיק חדש"]):
         log("    ✗ לא הצלחתי ללחוץ על 'תיק חדש'", is_error=True)
