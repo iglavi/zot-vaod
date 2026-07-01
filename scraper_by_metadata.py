@@ -315,21 +315,17 @@ async def navigate_to_case_search(page):
 
 
 async def go_back_to_search(page) -> bool:
-    """לוחץ על כפתור 'חזרה' לחזרה לטופס החיפוש."""
-    try:
-        btn = page.locator("input[value='חזרה'], button:has-text('חזרה')").first
-        if await btn.count() > 0 and await btn.is_visible():
-            await btn.click()
-            await page.wait_for_timeout(1000)
-            return True
-    except Exception:
-        pass
-    # ניסיון שני — חיפוש לפי id או value
+    """לוחץ על כפתור 'חזרה' (id='ButtonsGroup1_btnClear', תג <a>) לחזרה לטופס החיפוש."""
+    await dismiss_any_overlay(page)
+    if await _click_element_by_id_contains(page, "ButtonsGroup1_btnClear"):
+        return True
+    # ניסיון שני — חיפוש כללי לפי טקסט/id, כולל תגי <a>
     try:
         clicked = await page.evaluate("""
             () => {
-                const btns = [...document.querySelectorAll('input[type=button], button')];
-                const b = btns.find(b => b.value === 'חזרה' || b.innerText.trim() === 'חזרה');
+                const els = [...document.querySelectorAll('input[type=button], button, a')];
+                const b = els.find(el => (el.value || el.innerText || '').trim() === 'חזרה' ||
+                                          el.id?.includes('btnClear') || el.id?.includes('btnReturn'));
                 if (b) { b.click(); return true; }
                 return false;
             }
@@ -339,6 +335,7 @@ async def go_back_to_search(page) -> bool:
             return True
     except Exception:
         pass
+    log("    [go-back] לא הצלחתי ללחוץ על 'חזרה'", is_error=True)
     return False
 
 
@@ -747,10 +744,16 @@ async def uncheck_all(page):
 
 
 async def click_checkbox(page, row_idx: int) -> bool:
+    """
+    מסמן checkbox בשורה row_idx. ag-grid משכפל את row-index על עמודות מוצמדות (pinned) —
+    כלומר querySelector (יחיד) עלול לתפוס את הצד בלי ה-checkbox. משתמשים ב-querySelectorAll
+    ובודקים את כל האלמנטים התואמים, עם fallback לרשימת כל ה-checkboxes הגלויים.
+    """
     try:
         await page.evaluate(f"""
             () => {{
-                const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
+                const rows = [...document.querySelectorAll('.ag-row[row-index="{row_idx}"]')];
+                const row = rows.find(r => r.querySelector('input[type=checkbox]')) || rows[0];
                 if (row) row.scrollIntoView({{block: 'center', behavior: 'instant'}});
             }}
         """)
@@ -760,40 +763,52 @@ async def click_checkbox(page, row_idx: int) -> bool:
 
     pos = await page.evaluate(f"""
         () => {{
-            const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
-            if (!row) return null;
-            const cb = row.querySelector('input[type=checkbox]');
-            if (!cb) return null;
-            const r = cb.getBoundingClientRect();
-            if (r.width <= 0) return null;
-            return {{x: r.left + r.width/2, y: r.top + r.height/2}};
+            const rows = [...document.querySelectorAll('.ag-row[row-index="{row_idx}"]')];
+            for (const row of rows) {{
+                const cb = row.querySelector('input[type=checkbox]');
+                if (cb) {{
+                    const r = cb.getBoundingClientRect();
+                    if (r.width > 0) return {{x: r.left + r.width/2, y: r.top + r.height/2}};
+                }}
+            }}
+            // fallback: רשימת כל ה-checkboxes הגלויים (לא כולל select-all), לפי אינדקס row_idx
+            const cbs = [...document.querySelectorAll('input[type=checkbox]')].filter(cb =>
+                cb.offsetParent !== null &&
+                !cb.parentElement?.parentElement?.className.includes('ag-header-select-all')
+            );
+            if ({row_idx} < cbs.length) {{
+                const r = cbs[{row_idx}].getBoundingClientRect();
+                if (r.width > 0) return {{x: r.left + r.width/2, y: r.top + r.height/2}};
+            }}
+            return null;
         }}
     """)
     if not pos:
         return False
 
+    async def _is_checked() -> bool:
+        return await page.evaluate(f"""
+            () => {{
+                const rows = [...document.querySelectorAll('.ag-row[row-index="{row_idx}"]')];
+                for (const row of rows) {{
+                    const cb = row.querySelector('input[type=checkbox]');
+                    if (cb) return cb.checked;
+                }}
+                const cbs = [...document.querySelectorAll('input[type=checkbox]')].filter(cb =>
+                    cb.offsetParent !== null &&
+                    !cb.parentElement?.parentElement?.className.includes('ag-header-select-all')
+                );
+                return {row_idx} < cbs.length ? cbs[{row_idx}].checked : false;
+            }}
+        """)
+
     await page.mouse.click(pos["x"], pos["y"])
     await page.wait_for_timeout(600)
-
-    checked = await page.evaluate(f"""
-        () => {{
-            const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
-            if (!row) return false;
-            const cb = row.querySelector('input[type=checkbox]');
-            return cb ? cb.checked : false;
-        }}
-    """)
+    checked = await _is_checked()
     if not checked:
         await page.mouse.click(pos["x"], pos["y"])
         await page.wait_for_timeout(600)
-        checked = await page.evaluate(f"""
-            () => {{
-                const row = document.querySelector('.ag-row[row-index="{row_idx}"]');
-                if (!row) return false;
-                const cb = row.querySelector('input[type=checkbox]');
-                return cb ? cb.checked : false;
-            }}
-        """)
+        checked = await _is_checked()
     return bool(checked)
 
 
