@@ -339,6 +339,21 @@ async def go_back_to_search(page) -> bool:
     return False
 
 
+async def ensure_back_to_search(page):
+    """
+    מבטיח שאנחנו על טופס 'איתור לפי תיק'. אם 'חזרה' נכשל — הדף עלול להיות
+    'תקוע' על עמוד לא צפוי, וכל הריצה מהשורה הבאה תיכשל בשקט. אז אם 'חזרה'
+    נכשל, מנווטים מחדש מההתחלה (reset מלא) במקום להמשיך על דף שבור.
+    """
+    if await go_back_to_search(page):
+        return
+    log("    [recover] מנווט מחדש לטופס החיפוש (reset מלא)", is_error=True)
+    try:
+        await navigate_to_case_search(page)
+    except Exception as e:
+        log(f"    [recover] נכשל גם ניווט מלא: {e}", is_error=True)
+
+
 # ── מילוי טופס חיפוש לפי תיק ───────────────────────────────
 RADIO_ID_HINTS = {
     "תיק ישן": "OldCaseIdentifierOptionBoxVT",
@@ -902,7 +917,7 @@ async def process_row(page, row: dict, done_dl: set[str],
 
     if not ok:
         log(f"    ✗ כישלון בחיפוש", is_error=True)
-        await go_back_to_search(page)
+        await ensure_back_to_search(page)
         return False
 
     # קריאת תוצאות
@@ -910,7 +925,7 @@ async def process_row(page, row: dict, done_dl: set[str],
     if count == 0:
         log(f"    — אין תוצאות")
         _state.no_match += 1
-        await go_back_to_search(page)
+        await ensure_back_to_search(page)
         return False
 
     log(f"    תוצאות: {count}")
@@ -922,7 +937,7 @@ async def process_row(page, row: dict, done_dl: set[str],
     rows = await get_grid_rows(page)
     if not rows:
         log(f"    ✗ לא הצלחתי לקרוא שורות מהגריד", is_error=True)
-        await go_back_to_search(page)
+        await ensure_back_to_search(page)
         return False
 
     target_idx = find_target_row(rows, target_date, sug_hach)
@@ -930,7 +945,7 @@ async def process_row(page, row: dict, done_dl: set[str],
         log(f"    — לא נמצאה שורה תואמת ({target_date}, {sug_hach})")
         log(f"    שורות בגריד: {[r.get('fullText','')[:80] for r in rows[:5]]}")
         _state.no_match += 1
-        await go_back_to_search(page)
+        await ensure_back_to_search(page)
         return False
 
     log(f"    נמצא: row-index={target_idx}")
@@ -951,7 +966,7 @@ async def process_row(page, row: dict, done_dl: set[str],
     else:
         log(f"    ✗ כישלון בהורדה", is_error=True)
 
-    await go_back_to_search(page)
+    await ensure_back_to_search(page)
     return success
 
 
