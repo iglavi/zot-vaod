@@ -1,0 +1,21 @@
+# אינדקס שנבנה מקומית (נבנה מחדש עם python -m zot.ingest)
+data/index.db
+data/*.db
+
+# פסקי דין (נתונים גולמיים) — לא נשמרים ב-git
+documents/*.docx
+documents/*.doc
+documents/*.pdf
+documents/*.txt
+!documents/.gitkeep
+
+# פייתון
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# מערכת
+.DS_Store
+Thumbs.db
