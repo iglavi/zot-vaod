@@ -6,7 +6,11 @@
   {hash}.docx + {hash}.pdf. הסקריפט מוריד את כל הקבצים החדשים ואז מריץ את
   בניית האינדקס, כך שהמאגר מתעדכן אוטומטית.
 
-פרטי הגישה נקראים ממשתני סביבה (או מקובץ .env מקומי):
+האתר מוגן ב-WAF שמנתק לקוחות שאינם דפדפן; לכן הסקריפט מתחזה ל-Chrome
+באמצעות curl_cffi (אם מותקנת) ומוסיף כותרות דפדפן. אם curl_cffi אינה
+מותקנת — נופל חזרה ל-requests רגיל (עלול להיחסם על ידי ה-WAF).
+
+פרטי הגישה נקראים ממשתני סביבה או מקובץ .env מקומי:
   DECISIONS_USER, DECISIONS_PASSWORD   — שם המשתמש והסיסמה
   DECISIONS_URL   — כתובת הבסיס (ברירת מחדל: https://decisions.court.gov.il/)
   DECISIONS_DAYS  — כמה תיקיות תאריך אחרונות להוריד (0 = כל הקיימות; ברירת מחדל 0)
@@ -15,6 +19,7 @@
 """
 from __future__ import annotations
 
+import base64
 import os
 import re
 import sys
@@ -31,6 +36,14 @@ _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 _DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})/?$")
 _FILE_EXT = (".pdf", ".docx", ".doc")
 
+_BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+    "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+               "image/avif,image/webp,*/*;q=0.8"),
+    "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
 
 def load_dotenv() -> None:
     """טוען משתני סביבה מקובץ .env מקומי (אם קיים) — כדי לא לשמור סיסמה בקוד."""
@@ -45,20 +58,45 @@ def load_dotenv() -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
+def make_session(user: str, password: str):
+    """יוצר Session שנראה כמו Chrome. מחזיר (session, engine_name)."""
+    headers = dict(_BROWSER_HEADERS)
+    # שולחים את אימות ה-Basic מראש (preemptive) בכל בקשה, ללא תלות בספרייה
+    token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+    headers["Authorization"] = f"Basic {token}"
+
+    try:
+        from curl_cffi import requests as creq  # התחזות לטביעת האצבע של Chrome
+
+        session = creq.Session(impersonate="chrome", timeout=90)
+        session.headers.update(headers)
+        return session, "curl_cffi"
+    except Exception:
+        pass
+
+    import requests
+
+    session = requests.Session()
+    session.headers.update(headers)
+    return session, "requests"
+
+
 def _list_links(session, url: str) -> list[str]:
     resp = session.get(url, timeout=90)
     resp.raise_for_status()
     return [urljoin(url, h) for h in _HREF_RE.findall(resp.text)]
 
 
+def _download(session, url: str, target: Path) -> None:
+    resp = session.get(url, timeout=180)
+    resp.raise_for_status()
+    tmp = target.with_name(target.name + ".part")
+    tmp.write_bytes(resp.content)
+    tmp.replace(target)
+
+
 def main() -> int:
     load_dotenv()
-    try:
-        import requests
-        from requests.auth import HTTPBasicAuth
-    except ImportError:
-        print("חסרה חבילת requests. התקינו:  pip install -r requirements.txt")
-        return 1
 
     base = os.environ.get("DECISIONS_URL", "https://decisions.court.gov.il/")
     base = base.rstrip("/") + "/"
@@ -71,19 +109,25 @@ def main() -> int:
               "(ראו קובץ .env.example).")
         return 1
 
-    session = requests.Session()
-    session.auth = HTTPBasicAuth(user, password)
-    session.headers["User-Agent"] = "zot-vaod-fetch/1.0"
+    try:
+        session, engine = make_session(user, password)
+    except ImportError:
+        print("חסרה חבילת רשת. התקינו:  pip install -r requirements.txt")
+        return 1
+
+    if engine != "curl_cffi":
+        print("שים לב: curl_cffi אינה מותקנת — ייתכן שהאתר יחסום. "
+              "מומלץ להריץ:  pip install curl_cffi")
 
     print(f"מתחבר אל {base} ...")
     try:
         root_links = _list_links(session, base)
     except Exception as e:  # noqa: BLE001
         print(f"שגיאה בהתחברות/קריאת השורש: {e}")
-        print("בדקו שם משתמש/סיסמה (שימו לב לאותיות גדולות/קטנות) ואת הכתובת.")
+        print("אם מדובר בניתוק חיבור (10054) — התקינו curl_cffi:  pip install curl_cffi")
+        print("אם מדובר בקוד 401 — בדקו שם משתמש/סיסמה (אותיות גדולות/קטנות).")
         return 1
 
-    # איתור תיקיות תאריך בשורש
     folders: dict[str, str] = {}
     for link in root_links:
         m = _DATE_RE.search(link.rstrip("/"))
@@ -94,7 +138,7 @@ def main() -> int:
     ordered = sorted(folders.items())
     if only_days > 0:
         ordered = ordered[-only_days:]
-    print(f"נמצאו {len(ordered)} תיקיות תאריך להורדה.")
+    print(f"התחברות הצליחה ({engine}). נמצאו {len(ordered)} תיקיות תאריך.")
 
     downloaded = skipped = errors = 0
     for name, url in ordered:
@@ -115,13 +159,7 @@ def main() -> int:
                 skipped += 1
                 continue
             try:
-                with session.get(fl, stream=True, timeout=180) as resp:
-                    resp.raise_for_status()
-                    tmp = target.with_name(target.name + ".part")
-                    with open(tmp, "wb") as fo:
-                        for chunk in resp.iter_content(65536):
-                            fo.write(chunk)
-                    tmp.replace(target)
+                _download(session, fl, target)
                 downloaded += 1
                 if downloaded % 25 == 0:
                     print(f"  ...הורדו {downloaded} קבצים")
