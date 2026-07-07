@@ -16,6 +16,9 @@ __pycache__/
 venv/
 .env
 
+# סודות (מפתחות API) — לעולם לא נשמרים ב-git
+.streamlit/secrets.toml
+
 # מערכת
 .DS_Store
 Thumbs.db

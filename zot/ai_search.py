@@ -79,7 +79,7 @@ def analyze_query(client, question: str, today: str | None = None) -> dict:
     )
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=os.environ.get("ZOT_MODEL") or config.AI_MODEL,
             max_tokens=600,
             output_config={"format": {"type": "json_schema", "schema": _ANALYZE_SCHEMA}},
             messages=[{"role": "user", "content": prompt}],

@@ -8,17 +8,33 @@
 """
 from __future__ import annotations
 
-import io
+import os
 from datetime import date
 
 import streamlit as st
 
-from zot import config, search
-from zot import ai_search
-from zot.ingest import build as build_index
-
 st.set_page_config(page_title="זכות ואוד — חיפוש הליכים משפטיים",
                    page_icon="⚖️", layout="centered")
+
+
+def _bridge_secrets():
+    """מעביר סודות של Streamlit Cloud למשתני סביבה (שאותם קורא ה-SDK של Anthropic)."""
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ZOT_MODEL"):
+        if os.environ.get(key):
+            continue
+        try:
+            val = st.secrets[key]  # type: ignore[index]
+        except Exception:
+            val = None
+        if val:
+            os.environ[key] = str(val)
+
+
+_bridge_secrets()
+
+from zot import config, search  # noqa: E402
+from zot import ai_search  # noqa: E402
+from zot.ingest import build as build_index  # noqa: E402
 
 # ============================ עיצוב ============================
 st.markdown("""
@@ -75,24 +91,47 @@ st.markdown("""
 
 
 # ============================ אינדקס ============================
+@st.cache_resource(show_spinner=False)
+def _auto_build_index():
+    """בונה את האינדקס פעם אחת לכל הרצת שרת (למשל בעלייה ראשונה בענן)."""
+    return build_index(verbose=False)
+
+
 def ensure_index_ui() -> bool:
-    """מוודא שקיים אינדקס; אם לא — מציע לבנות אותו. מחזיר True אם מוכן."""
+    """מוודא שקיים אינדקס; אם חסר — בונה אותו אוטומטית. מחזיר True אם מוכן."""
     if search.db_exists():
         return True
-    st.markdown('<div class="hint">האינדקס עדיין לא נבנה. '
-                'ודאו שקובץ <code>data/metadata.csv</code> וקבצי פסקי הדין '
-                'בתיקייה <code>documents/</code> קיימים, ואז לחצו על הכפתור.</div>',
-                unsafe_allow_html=True)
-    if st.button("🛠️ בנה אינדקס עכשיו"):
-        try:
-            with st.spinner("בונה אינדקס — קורא את קבצי פסקי הדין..."):
-                stats = build_index(verbose=False)
-            st.success(f"האינדקס נבנה: {stats['rows']} רשומות, "
-                       f"{stats['documents_matched']} עם טקסט מלא.")
-            st.rerun()
-        except Exception as e:  # noqa: BLE001
-            st.error(f"שגיאה בבניית האינדקס: {e}")
-    return False
+    if not config.METADATA_PATH.exists():
+        st.markdown('<div class="hint">לא נמצא קובץ <code>data/metadata.csv</code>. '
+                    'ודאו שקובץ המטא-דאטה וקבצי פסקי הדין (<code>documents/</code>) '
+                    'קיימים בפרויקט.</div>', unsafe_allow_html=True)
+        return False
+    try:
+        with st.spinner("בונה את אינדקס החיפוש בפעם הראשונה — כמה שניות..."):
+            _auto_build_index()
+        return True
+    except Exception as e:  # noqa: BLE001
+        st.error(f"שגיאה בבניית האינדקס: {e}")
+        return False
+
+
+def sidebar():
+    with st.sidebar:
+        st.markdown("### ⚖️ זכות ואוד")
+        if search.db_exists():
+            s = search.stats()
+            st.caption(f"{s['total']:,} החלטות · {s['with_documents']:,} עם טקסט מלא")
+        st.caption("מנוע חכם: " + ("✅ פעיל" if ai_search.has_ai_credentials()
+                                    else "🔒 דורש מפתח API"))
+        if st.button("🔄 בנייה מחדש של האינדקס"):
+            _auto_build_index.clear()
+            try:
+                with st.spinner("בונה מחדש..."):
+                    _auto_build_index()
+                st.success("האינדקס נבנה מחדש.")
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"שגיאה: {e}")
 
 
 def fmt_meta(row) -> str:
@@ -262,6 +301,7 @@ def tab_ai():
 
 
 # ============================ פריסה ============================
+sidebar()
 tab1, tab2 = st.tabs(["🔍 חיפוש רגיל", "✨ חיפוש חכם (AI)"])
 with tab1:
     tab_simple()
