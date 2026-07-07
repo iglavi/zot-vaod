@@ -22,8 +22,7 @@
 
 3. מלאו:
    - **Repository:** `iglavi/zot-vaod`
-   - **Branch:** `claude/israeli-court-search-app-gtaie0`
-     (או `main`, אם תמזגו קודם את השינויים ל-main)
+   - **Branch:** `main`
    - **Main file path:** `app.py`
 
 4. לחצו על **"Advanced settings"** → בשדה **Secrets** הדביקו:
