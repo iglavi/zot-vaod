@@ -40,7 +40,30 @@ def read_text(path: str | Path) -> str:
                         if cell.text:
                             parts.append(cell.text)
             return "\n".join(t for t in parts if t and t.strip())
+        if suffix == ".pdf":
+            return _read_pdf(p)
         return p.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _read_pdf(p: Path) -> str:
+    """מחלץ טקסט מקובץ PDF. מנסה pdfplumber (טוב יותר לעברית) ואז pypdf."""
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(str(p)) as pdf:
+            pages = [(page.extract_text() or "") for page in pdf.pages]
+        text = "\n".join(pages).strip()
+        if text:
+            return text
+    except Exception:
+        pass
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(p))
+        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
     except Exception:
         return ""
 
