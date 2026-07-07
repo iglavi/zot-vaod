@@ -1,0 +1,381 @@
+<title>גילוי נאות — עיון בפסיקת בתי המשפט</title>
+<style>
+  :root{
+    --bg:#ECE8E0; --surface:#F8F6F1; --surface-2:#FCFBF8;
+    --ink:#22201B; --muted:#6C655A; --faint:#948C7E; --border:#DAD3C6;
+    --accent:#1C5E5B; --accent-ink:#123F3D; --accent-tint:#DDE9E6;
+    --brass:#9A6A31; --brass-tint:#F0E6D6;
+    --focus:#2E8C86;
+    --sans:"Assistant","Segoe UI","Arial Hebrew","Noto Sans Hebrew","Rubik",system-ui,-apple-system,sans-serif;
+    --mono:"SF Mono","JetBrains Mono","Menlo","Consolas",monospace;
+    --maxw:960px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#141619; --surface:#1D2023; --surface-2:#24282C;
+      --ink:#E9E5DC; --muted:#9C978C; --faint:#6E6A60; --border:#2C3135;
+      --accent:#54B8AF; --accent-ink:#8FD6CE; --accent-tint:#1A302F;
+      --brass:#CB9C60; --brass-tint:#2A2418;
+      --focus:#54B8AF;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#ECE8E0; --surface:#F8F6F1; --surface-2:#FCFBF8;
+    --ink:#22201B; --muted:#6C655A; --faint:#948C7E; --border:#DAD3C6;
+    --accent:#1C5E5B; --accent-ink:#123F3D; --accent-tint:#DDE9E6;
+    --brass:#9A6A31; --brass-tint:#F0E6D6; --focus:#2E8C86;
+  }
+  :root[data-theme="dark"]{
+    --bg:#141619; --surface:#1D2023; --surface-2:#24282C;
+    --ink:#E9E5DC; --muted:#9C978C; --faint:#6E6A60; --border:#2C3135;
+    --accent:#54B8AF; --accent-ink:#8FD6CE; --accent-tint:#1A302F;
+    --brass:#CB9C60; --brass-tint:#2A2418; --focus:#54B8AF;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink); direction:rtl;
+    font-family:var(--sans); line-height:1.55;
+    -webkit-font-smoothing:antialiased; font-size:16px;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 20px}
+  a{color:var(--accent)}
+
+  /* ---------- header ---------- */
+  header{
+    position:sticky; top:0; z-index:20; background:var(--surface);
+    border-bottom:1px solid var(--border);
+  }
+  .head-in{max-width:var(--maxw); margin:0 auto; padding:14px 20px;
+    display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .brand{display:flex; align-items:center; gap:11px}
+  .brand svg{width:26px; height:26px; flex:none; color:var(--accent)}
+  .brand h1{font-size:1.18rem; font-weight:700; margin:0; letter-spacing:.01em}
+  .brand .sub{display:block; font-size:.72rem; font-weight:500; color:var(--muted);
+    letter-spacing:.04em; margin-top:1px}
+  .theme-btn{background:transparent; border:1px solid var(--border); color:var(--muted);
+    width:38px; height:38px; border-radius:9px; cursor:pointer; font-size:1rem;
+    display:grid; place-items:center; transition:border-color .15s,color .15s}
+  .theme-btn:hover{border-color:var(--accent); color:var(--accent)}
+
+  /* ---------- intro / stats ---------- */
+  .intro{padding:26px 0 10px}
+  .intro p{margin:0 0 14px; color:var(--muted); max-width:60ch; font-size:.95rem}
+  .stats{display:flex; flex-wrap:wrap; gap:8px 10px; margin-bottom:6px}
+  .stat{font-size:.78rem; color:var(--muted); background:var(--surface);
+    border:1px solid var(--border); border-radius:20px; padding:4px 12px;
+    display:flex; align-items:baseline; gap:6px}
+  .stat b{color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums}
+
+  /* ---------- controls ---------- */
+  .panel{background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:16px; margin:14px 0 22px}
+  .q-row{display:flex; gap:10px; margin-bottom:12px}
+  .q-row .field{flex:1}
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:11px}
+  label.lbl{display:block; font-size:.7rem; font-weight:600; color:var(--faint);
+    letter-spacing:.06em; margin:0 2px 5px}
+  input,select{
+    width:100%; font-family:var(--sans); font-size:.92rem; color:var(--ink);
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    padding:9px 11px; direction:rtl; transition:border-color .15s,box-shadow .15s}
+  input[type="date"]{font-family:var(--mono); font-size:.82rem}
+  input::placeholder{color:var(--faint)}
+  input:focus,select:focus{outline:none; border-color:var(--focus);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--focus) 22%,transparent)}
+  .actions{display:flex; align-items:center; justify-content:space-between;
+    gap:12px; margin-top:14px; flex-wrap:wrap}
+  .count{font-size:.85rem; color:var(--muted); font-variant-numeric:tabular-nums}
+  .count b{color:var(--ink)}
+  .clear{background:transparent; border:none; color:var(--brass); cursor:pointer;
+    font-family:var(--sans); font-size:.85rem; padding:6px 4px}
+  .clear:hover{text-decoration:underline}
+
+  /* ---------- results ledger ---------- */
+  .results{background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; overflow:hidden}
+  .rec{padding:16px 20px; border-bottom:1px solid var(--border)}
+  .rec:last-child{border-bottom:none}
+  .rec-top{display:flex; align-items:baseline; justify-content:space-between; gap:14px}
+  .parties{font-weight:600; font-size:1.03rem; color:var(--ink); text-wrap:balance}
+  .case{font-family:var(--mono); font-size:.78rem; color:var(--brass);
+    background:var(--brass-tint); border-radius:6px; padding:3px 9px; white-space:nowrap;
+    letter-spacing:.02em; flex:none; font-variant-numeric:tabular-nums}
+  .meta{margin-top:7px; display:flex; flex-wrap:wrap; gap:5px 16px;
+    font-size:.82rem; color:var(--muted)}
+  .meta span{display:inline-flex; align-items:center; gap:5px}
+  .meta .court{color:var(--accent); font-weight:500}
+  .meta .num{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:.78rem}
+  .meta svg{width:13px; height:13px; opacity:.6; flex:none}
+  .rec-actions{margin-top:11px}
+  .toggle{background:transparent; border:1px solid var(--border); color:var(--accent);
+    font-family:var(--sans); font-size:.8rem; border-radius:7px; padding:5px 12px;
+    cursor:pointer; transition:background .15s,border-color .15s}
+  .toggle:hover{background:var(--accent-tint); border-color:var(--accent)}
+  .full{margin-top:12px; background:var(--surface-2); border:1px solid var(--border);
+    border-radius:9px; padding:14px 16px}
+  .full pre{margin:0 0 12px; white-space:pre-wrap; word-break:break-word;
+    font-family:var(--sans); font-size:.9rem; line-height:1.75; color:var(--ink);
+    max-height:420px; overflow:auto}
+  .full .dl{display:inline-flex; align-items:center; gap:6px; font-size:.8rem;
+    color:var(--accent); text-decoration:none; border:1px solid var(--border);
+    border-radius:7px; padding:5px 11px}
+  .full .dl:hover{background:var(--accent-tint)}
+  .no-doc{margin-top:10px; font-size:.8rem; color:var(--faint)}
+
+  /* ---------- pagination / empty ---------- */
+  .pager{display:flex; align-items:center; justify-content:center; gap:14px;
+    margin:22px 0 8px}
+  .pager button{background:var(--surface); border:1px solid var(--border);
+    color:var(--ink); border-radius:8px; padding:8px 16px; cursor:pointer;
+    font-family:var(--sans); font-size:.85rem; transition:border-color .15s}
+  .pager button:hover:not(:disabled){border-color:var(--accent); color:var(--accent)}
+  .pager button:disabled{opacity:.4; cursor:default}
+  .pager .pos{font-size:.83rem; color:var(--muted); font-variant-numeric:tabular-nums}
+  .empty{text-align:center; padding:48px 20px; color:var(--muted)}
+  .empty svg{width:34px; height:34px; opacity:.4; margin-bottom:10px}
+
+  /* ---------- AI note ---------- */
+  .ai{margin:30px 0; background:var(--surface); border:1px solid var(--border);
+    border-inline-start:3px solid var(--accent); border-radius:12px; padding:18px 20px}
+  .ai h2{margin:0 0 6px; font-size:1rem; color:var(--ink)}
+  .ai p{margin:0 0 10px; font-size:.9rem; color:var(--muted); max-width:62ch}
+  .ai .ex{display:flex; flex-wrap:wrap; gap:8px}
+  .ai .ex span{font-size:.8rem; color:var(--accent-ink); background:var(--accent-tint);
+    border-radius:16px; padding:5px 12px}
+
+  footer{padding:26px 0 40px; text-align:center; color:var(--faint); font-size:.78rem}
+
+  :focus-visible{outline:2px solid var(--focus); outline-offset:2px; border-radius:4px}
+  @media (prefers-reduced-motion:no-preference){
+    .rec{animation:rise .35s ease both}
+    @keyframes rise{from{opacity:0; transform:translateY(4px)}to{opacity:1;transform:none}}
+  }
+  @media (max-width:560px){
+    .rec-top{flex-direction:column; gap:6px} .q-row{flex-direction:column}
+  }
+</style>
+
+<header>
+  <div class="head-in">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v18M7 21h10M5 7h14M12 4l6 3M12 4L6 7"/>
+        <path d="M6 7l-2.5 5a2.5 2.5 0 0 0 5 0L6 7zM18 7l-2.5 5a2.5 2.5 0 0 0 5 0L18 7z"/>
+      </svg>
+      <div>
+        <h1>גילוי נאות</h1>
+        <span class="sub">עיון בפסיקת בתי המשפט בישראל</span>
+      </div>
+    </div>
+    <button class="theme-btn" id="theme" title="החלפת מצב תצוגה" aria-label="החלפת מצב תצוגה">◐</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="intro">
+    <p>חיפוש חופשי במאגר החלטות ופסקי דין של בתי המשפט בישראל — לפי שם צד לתיק,
+       שם שופט/ת, מספר תיק, בית משפט, סוג הליך, טווח תאריכים או מילים בגוף פסק הדין.</p>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel" role="search">
+    <div class="q-row">
+      <div class="field">
+        <label class="lbl" for="q">חיפוש חופשי</label>
+        <input id="q" type="search" placeholder="שם, נושא, או מילים מגוף פסק הדין…"
+               autocomplete="off">
+      </div>
+    </div>
+    <div class="grid">
+      <div><label class="lbl" for="f-party">שם צד לתיק</label>
+        <input id="f-party" autocomplete="off" placeholder="למשל: מקייס"></div>
+      <div><label class="lbl" for="f-judge">שם שופט/ת</label>
+        <input id="f-judge" autocomplete="off" placeholder="למשל: רוני סלע"></div>
+      <div><label class="lbl" for="f-case">מספר תיק</label>
+        <input id="f-case" autocomplete="off" placeholder="למשל: 4934-07-24"></div>
+      <div><label class="lbl" for="f-court">בית משפט</label>
+        <select id="f-court"></select></div>
+      <div><label class="lbl" for="f-proc">סוג הליך</label>
+        <select id="f-proc"></select></div>
+      <div><label class="lbl" for="f-from">מתאריך</label>
+        <input id="f-from" type="date"></div>
+      <div><label class="lbl" for="f-to">עד תאריך</label>
+        <input id="f-to" type="date"></div>
+    </div>
+    <div class="actions">
+      <span class="count" id="count"></span>
+      <button class="clear" id="clear">ניקוי כל השדות ✕</button>
+    </div>
+  </section>
+
+  <section id="out" aria-live="polite"></section>
+  <div class="pager" id="pager" hidden>
+    <button id="prev">→ הקודם</button>
+    <span class="pos" id="pos"></span>
+    <button id="next">הבא ←</button>
+  </div>
+
+  <section class="ai">
+    <h2>✦ חיפוש חכם (AI)</h2>
+    <p>בגרסה המלאה של האפליקציה קיים גם מנוע חיפוש חכם: שאלות בשפה חופשית שמקבלות
+       תשובה מנומקת עם הפניות למספרי התיקים, מבוסס על מודל Claude. מנוע זה דורש שרת
+       ומפתח API ולכן אינו פועל באתר סטטי זה — אך זמין בהרצה המקומית של האפליקציה.</p>
+    <div class="ex">
+      <span>אילו פסקי דין מהשנה האחרונה עסקו בסכסוכי עבודה?</span>
+      <span>אילו החלטות ניתנו בנושא נפגעי עבודה מול המוסד לביטוח לאומי?</span>
+    </div>
+  </section>
+
+  <footer>גילוי נאות · המידע מבוסס על החלטות פומביות של בתי המשפט (מאתר נט-המשפט)</footer>
+</div>
+
+<script id="ds" type="application/json">__DATA__</script>
+<script>
+(function(){
+  "use strict";
+  const raw = JSON.parse(document.getElementById("ds").textContent);
+
+  // ---- dedupe identical records ----
+  const seen = new Set(), DATA = [];
+  for(const r of raw){
+    const k = [r.case_number,r.parties,r.court,r.decision_type,r.decision_date,r.filed_date].join("|");
+    if(seen.has(k)) continue; seen.add(k); DATA.push(r);
+  }
+  const eff = r => r.decision_date || r.filed_date || "";
+
+  // ---- theme ----
+  const root = document.documentElement, tb = document.getElementById("theme");
+  tb.addEventListener("click", ()=>{
+    const cur = root.getAttribute("data-theme")
+      || (matchMedia("(prefers-color-scheme:dark)").matches ? "dark":"light");
+    root.setAttribute("data-theme", cur==="dark" ? "light":"dark");
+  });
+
+  // ---- populate selects ----
+  const uniq = k => [...new Set(DATA.map(r=>r[k]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"he"));
+  const fill = (id,label)=>{
+    const s=document.getElementById(id);
+    s.innerHTML='<option value="">— הכול —</option>';
+    for(const v of uniq(label)){const o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);}
+  };
+  fill("f-court","court"); fill("f-proc","proceeding");
+
+  // ---- stats ----
+  const withText = DATA.filter(r=>r.full_text).length;
+  document.getElementById("stats").innerHTML =
+    `<span class="stat"><b>${DATA.length.toLocaleString("he")}</b> החלטות</span>`+
+    `<span class="stat"><b>${withText}</b> עם טקסט מלא</span>`+
+    `<span class="stat"><b>${uniq("court").length}</b> בתי משפט</span>`;
+
+  // ---- elements ----
+  const els = {
+    q:g("q"), party:g("f-party"), judge:g("f-judge"), case:g("f-case"),
+    court:g("f-court"), proc:g("f-proc"), from:g("f-from"), to:g("f-to"),
+    out:g("out"), count:g("count"), pager:g("pager"), pos:g("pos"),
+    prev:g("prev"), next:g("next")
+  };
+  function g(id){return document.getElementById(id);}
+  const inc = (h,n)=> h && n && h.indexOf(n)!==-1;
+  const PER = 12; let page = 0, current = DATA;
+
+  function filter(){
+    const q=els.q.value.trim(), party=els.party.value.trim(), judge=els.judge.value.trim(),
+      cs=els.case.value.trim(), court=els.court.value, proc=els.proc.value,
+      from=els.from.value, to=els.to.value;
+    return DATA.filter(r=>{
+      if(party && !inc(r.parties,party)) return false;
+      if(judge && !inc(r.judge,judge)) return false;
+      if(cs && !inc(r.case_number,cs)) return false;
+      if(court && r.court!==court) return false;
+      if(proc && r.proceeding!==proc) return false;
+      if(from && eff(r)<from) return false;
+      if(to && eff(r)>to) return false;
+      if(q){
+        const hay=(r.parties+" "+r.judge+" "+r.case_number+" "+r.court+" "+r.matter+" "+r.full_text);
+        for(const w of q.split(/\s+/)) if(!inc(hay,w)) return false;
+      }
+      return true;
+    });
+  }
+
+  const esc = s => (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const ICON = {
+    court:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 21h18M5 21V10M19 21V10M12 3l8 5H4l8-5zM9 21v-6M15 21v-6"/></svg>',
+    judge:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+    date:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>',
+    doc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6z"/><path d="M14 3v6h6"/></svg>'
+  };
+
+  function render(){
+    const res = current;
+    els.count.innerHTML = `נמצאו <b>${res.length.toLocaleString("he")}</b> החלטות`;
+    const pages = Math.max(1, Math.ceil(res.length/PER));
+    if(page>=pages) page=pages-1;
+    if(res.length===0){
+      els.out.innerHTML=`<div class="empty">${ICON.doc}<div>לא נמצאו תיקים תואמים.</div></div>`;
+      els.pager.hidden=true; return;
+    }
+    const slice = res.slice(page*PER,(page+1)*PER);
+    els.out.innerHTML = `<div class="results">`+slice.map((r,i)=>card(r,page*PER+i)).join("")+`</div>`;
+    els.pager.hidden = pages<=1;
+    els.pos.textContent = `עמוד ${page+1} מתוך ${pages}`;
+    els.prev.disabled = page===0; els.next.disabled = page>=pages-1;
+  }
+
+  function card(r,idx){
+    const d = eff(r);
+    const meta = [];
+    if(r.court) meta.push(`<span class="court">${ICON.court}${esc(r.court)}</span>`);
+    if(r.judge) meta.push(`<span>${ICON.judge}${esc(r.judge)}</span>`);
+    if(d) meta.push(`<span class="num">${ICON.date}${esc(d)}</span>`);
+    if(r.decision_type) meta.push(`<span>${esc(r.decision_type)}</span>`);
+    let doc;
+    if(r.full_text){
+      doc = `<div class="rec-actions"><button class="toggle" data-i="${idx}" aria-expanded="false">📖 הצג פסק דין מלא</button></div>`;
+    }else{
+      doc = `<div class="no-doc">ℹ️ קובץ פסק הדין המלא אינו זמין (קיימים פרטי המטא-דאטה בלבד).</div>`;
+    }
+    return `<article class="rec" id="rec-${idx}">
+      <div class="rec-top">
+        <div class="parties">${esc(r.parties)||"—"}</div>
+        <div class="case">${esc(r.case_number)}</div>
+      </div>
+      <div class="meta">${meta.join("")}</div>
+      ${doc}
+    </article>`;
+  }
+
+  // expand full text (delegated)
+  els.out.addEventListener("click", e=>{
+    const btn = e.target.closest(".toggle"); if(!btn) return;
+    const idx = +btn.dataset.i, r = current[idx];
+    const art = document.getElementById("rec-"+idx);
+    const open = art.querySelector(".full");
+    if(open){ open.remove(); btn.setAttribute("aria-expanded","false"); btn.textContent="📖 הצג פסק דין מלא"; return; }
+    const blob = new Blob([r.full_text||""],{type:"text/plain;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const div = document.createElement("div");
+    div.className="full";
+    div.innerHTML = `<pre>${esc(r.full_text)}</pre>`+
+      `<a class="dl" download="${esc(r.case_number||"verdict")}.txt" href="${url}">⬇︎ הורדת הטקסט</a>`;
+    art.appendChild(div);
+    btn.setAttribute("aria-expanded","true"); btn.textContent="▲ הסתר";
+  });
+
+  function run(reset){ if(reset) page=0; current=filter(); render(); }
+  let t; const debounced = ()=>{clearTimeout(t); t=setTimeout(()=>run(true),120);};
+  ["q","party","judge","case","from","to"].forEach(k=>els[k].addEventListener("input",debounced));
+  ["court","proc"].forEach(k=>els[k].addEventListener("change",()=>run(true)));
+  els.prev.addEventListener("click",()=>{if(page>0){page--;render();scrollTo({top:0,behavior:"smooth"});}});
+  els.next.addEventListener("click",()=>{page++;render();scrollTo({top:0,behavior:"smooth"});});
+  g("clear").addEventListener("click",()=>{
+    ["q","party","judge","case","from","to"].forEach(k=>els[k].value="");
+    els.court.value=""; els.proc.value=""; run(true);
+  });
+
+  run(false);
+})();
+</script>
