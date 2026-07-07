@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """הורדה יומית של פסקי דין ממאגר הרשות השופטת (decisions.court.gov.il) ועדכון המאגר.
 
-השרת הוא רשימת קבצים של IIS עם **אימות Windows (NTLM)**. הסקריפט מנסה שני
-מנועי רשת שיודעים לבצע NTLM, ובוחר את זה שהשרת/ה-WAF מאפשר:
-  1. curl.exe המובנה ב-Windows (‎--ntlm‎, משתמש ב-TLS של Windows)
-  2. requests + requests_ntlm
+האתגר: השרת מוגן ב-WAF שמזהה לקוחות שאינם דפדפן (לפי טביעת אצבע של TLS) ומחזיר
+דף חסימה, וגם דורש אימות Windows (NTLM). לכן המנוע המרכזי משלב את שניהם:
+  • curl_cffi — מתחזה לטביעת האצבע של Chrome ועובר את ה-WAF.
+  • spnego — מבצע את לחיצת היד של NTLM ידנית מעל אותו חיבור.
+כגיבוי מנסים גם requests_ntlm ו-curl.exe --ntlm, ובוחרים את המנוע שמחזיר את
+רשימת הקבצים האמיתית (ולא דף חסימה).
 
 לאחר ההתחברות, מוריד את כל קבצי ה-PDF/Word החדשים מכל תיקיות התאריך ומריץ
 בניית אינדקס, כך שהמאגר מתעדכן אוטומטית.
@@ -19,6 +21,7 @@
 """
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shutil
@@ -35,7 +38,6 @@ from zot import config  # noqa: E402
 from zot.ingest import build as build_index  # noqa: E402
 
 _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
-_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})/?$")
 _FILE_EXT = (".pdf", ".docx", ".doc")
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -60,15 +62,85 @@ def load_dotenv() -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
-# ---------- מנועי רשת (כל אחד יודע NTLM) ----------
-def _curl_engine(user: str, password: str, domain: str):
-    """מנוע מבוסס curl.exe המובנה ב-Windows (‎--ntlm‎)."""
+def _extract_ntlm_challenge(header_value: str):
+    for part in (header_value or "").split(","):
+        part = part.strip()
+        if part.upper().startswith("NTLM"):
+            token = part[4:].strip()
+            if token:
+                try:
+                    return base64.b64decode(token)
+                except Exception:  # noqa: BLE001
+                    return None
+    return None
+
+
+# ---------- מנועי רשת ----------
+def _curl_cffi_ntlm_engine(user, password, domain):
+    """המנוע המרכזי: curl_cffi (מתחזה ל-Chrome) + NTLM ידני דרך spnego."""
+    try:
+        from curl_cffi import requests as creq
+        import spnego
+    except ImportError:
+        return None
+    session = creq.Session(impersonate="chrome", timeout=120)
+    session.headers.update(_BROWSER_HEADERS)
+    userspec = f"{domain}\\{user}" if domain else user
+
+    def fetch(url, out_path):
+        try:
+            client = spnego.client(userspec, password, protocol="ntlm")
+            type1 = client.step()
+            r1 = session.get(
+                url, allow_redirects=False,
+                headers={"Authorization": "NTLM " + base64.b64encode(type1).decode()})
+            if r1.status_code != 401:
+                out_path.write_bytes(r1.content)
+                return r1.status_code, ""
+            challenge = _extract_ntlm_challenge(
+                r1.headers.get("WWW-Authenticate") or r1.headers.get("www-authenticate") or "")
+            if challenge is None:
+                return None, "no NTLM challenge in 401"
+            type3 = client.step(challenge)
+            r2 = session.get(
+                url, allow_redirects=False,
+                headers={"Authorization": "NTLM " + base64.b64encode(type3).decode()})
+            out_path.write_bytes(r2.content)
+            return r2.status_code, ""
+        except Exception as e:  # noqa: BLE001
+            return None, str(e)
+
+    return "curl_cffi+ntlm", fetch
+
+
+def _requests_ntlm_engine(user, password, domain):
+    try:
+        import requests
+        from requests_ntlm import HttpNtlmAuth
+    except ImportError:
+        return None
+    session = requests.Session()
+    session.headers.update(_BROWSER_HEADERS)
+    session.auth = HttpNtlmAuth(f"{domain}\\{user}" if domain else user, password)
+
+    def fetch(url, out_path):
+        try:
+            r = session.get(url, timeout=300)
+        except Exception as e:  # noqa: BLE001
+            return None, str(e)
+        out_path.write_bytes(r.content)
+        return r.status_code, ""
+
+    return "requests_ntlm", fetch
+
+
+def _curl_engine(user, password, domain):
     exe = shutil.which("curl")
     if not exe:
         return None
     userpwd = f"{domain}\\{user}:{password}" if domain else f"{user}:{password}"
 
-    def fetch(url: str, out_path: Path):
+    def fetch(url, out_path):
         args = [exe, "--ntlm", "-u", userpwd, "-s", "-A", _UA,
                 "--connect-timeout", "30", "--max-time", "300",
                 "-w", "%{http_code}", "-o", str(out_path), url]
@@ -84,53 +156,6 @@ def _curl_engine(user: str, password: str, domain: str):
     return "curl.exe --ntlm", fetch
 
 
-def _requests_ntlm_engine(user: str, password: str, domain: str):
-    """מנוע מבוסס requests + requests_ntlm."""
-    try:
-        import requests
-        from requests_ntlm import HttpNtlmAuth
-    except ImportError:
-        return None
-    session = requests.Session()
-    session.headers.update(_BROWSER_HEADERS)
-    session.auth = HttpNtlmAuth(f"{domain}\\{user}" if domain else user, password)
-
-    def fetch(url: str, out_path: Path):
-        try:
-            r = session.get(url, timeout=300)
-        except Exception as e:  # noqa: BLE001
-            return None, str(e)
-        out_path.write_bytes(r.content)
-        return r.status_code, ""
-
-    return "requests_ntlm", fetch
-
-
-def select_engine(user, password, domain, base):
-    """מנסה כל מנוע מול השורש ובוחר את הראשון שמחזיר 200."""
-    candidates = [e for e in (_curl_engine(user, password, domain),
-                              _requests_ntlm_engine(user, password, domain)) if e]
-    if not candidates:
-        print("לא נמצא מנוע רשת. התקינו:  pip install -r requirements.txt")
-        return None
-    last_401 = False
-    for name, fetch in candidates:
-        probe = _TMP / "zot_probe.html"
-        status, err = fetch(base, probe)
-        print(f"מנוע {name}: סטטוס={status}" + (f"  ({err})" if err else ""))
-        if status == 200:
-            return name, fetch
-        if status == 401:
-            last_401 = True
-    if last_401:
-        print(">> התחברנו לשרת אך האימות נדחה (401). בדקו שם משתמש/סיסמה, "
-              "ואולי צריך דומיין: הוסיפו ל-.env שורה DECISIONS_DOMAIN=...")
-    else:
-        print(">> כל המנועים נחסמו (החיבור נותק). ייתכן שה-WAF מאפשר רק דפדפן אמיתי — "
-              "נעבור לתוכנית ב' (הפעלת דפדפן ברקע).")
-    return None
-
-
 def find_date_folders(base: str, html: str) -> dict[str, str]:
     """מזהה קישורי תיקיות בשם תאריך (YYYY-M-D), עם או בלי לוכסן מסיים."""
     folders: dict[str, str] = {}
@@ -142,6 +167,46 @@ def find_date_folders(base: str, html: str) -> dict[str, str]:
             name = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
             folders.setdefault(name, link if link.endswith("/") else link + "/")
     return folders
+
+
+def select_engine(user, password, domain, base):
+    """מנסה כל מנוע מול השורש ובוחר את הראשון שמחזיר רשימת קבצים אמיתית."""
+    candidates = [e for e in (
+        _curl_cffi_ntlm_engine(user, password, domain),
+        _requests_ntlm_engine(user, password, domain),
+        _curl_engine(user, password, domain),
+    ) if e]
+    if not candidates:
+        print("לא נמצא מנוע רשת. התקינו:  pip install -r requirements.txt")
+        return None
+    saw_401 = saw_block = False
+    last_html = ""
+    for name, fetch in candidates:
+        probe = _TMP / "zot_probe.html"
+        status, err = fetch(base, probe)
+        folders = {}
+        if status == 200 and probe.exists():
+            last_html = probe.read_text(encoding="utf-8", errors="ignore")
+            folders = find_date_folders(base, last_html)
+        print(f"מנוע {name}: סטטוס={status}, תיקיות שזוהו={len(folders)}"
+              + (f"  ({err})" if err else ""))
+        if status == 200 and folders:
+            return name, fetch, folders
+        if status == 200:
+            saw_block = True
+        elif status == 401:
+            saw_401 = True
+
+    if saw_401:
+        print(">> התחברנו אך האימות נדחה (401). בדקו סיסמה, ואולי צריך "
+              "DECISIONS_DOMAIN ב-.env.")
+    elif saw_block:
+        dbg = ROOT / "debug_root.html"
+        dbg.write_text(last_html, encoding="utf-8")
+        print(f">> התקבל דף חסימה מה-WAF (נשמר ל-{dbg}).")
+    else:
+        print(">> כל המנועים נכשלו/נחסמו בחיבור.")
+    return None
 
 
 def list_links(fetch, url):
@@ -167,25 +232,12 @@ def main() -> int:
 
     print(f"פרטים שנקראו: משתמש={user}, אורך סיסמה={len(password)}"
           + (f", דומיין={domain}" if domain else ""))
-    print(f"מתחבר אל {base} (אימות NTLM) ...")
+    print(f"מתחבר אל {base} (WAF + NTLM) ...")
 
     selected = select_engine(user, password, domain, base)
     if not selected:
         return 1
-    engine, fetch = selected
-
-    root_text = (_TMP / "zot_probe.html").read_text(encoding="utf-8", errors="ignore")
-    folders = find_date_folders(base, root_text)
-    if not folders:
-        dbg = ROOT / "debug_root.html"
-        dbg.write_text(root_text, encoding="utf-8")
-        snippet = re.sub(r"\s+", " ", root_text)[:500]
-        print("לא זוהו תיקיות תאריך בעמוד השורש.")
-        print(f"אורך העמוד שהתקבל: {len(root_text)} תווים. תחילת התוכן:")
-        print("  " + snippet)
-        print(f"שמרתי את העמוד המלא ל: {dbg}")
-        print("שלחו לי את תחילת התוכן שמודפס למעלה (או את הקובץ), ואתאים את הזיהוי.")
-        return 1
+    engine, fetch, folders = selected
 
     ordered = sorted(folders.items())
     if only_days > 0:
@@ -221,7 +273,7 @@ def main() -> int:
                 part.unlink(missing_ok=True)
                 print(f"  שגיאה בהורדת {fname}: סטטוס {status} {err}")
                 errors += 1
-        print(f"  תיקייה {name}: הושלמה.")
+        print(f"  תיקייה {name}: הושלמה ({len(file_links)} פריטים).")
 
     print(f"סיכום הורדה: {downloaded} קבצים חדשים, {skipped} כבר קיימים, {errors} שגיאות.")
     print("מעדכן את מסד הנתונים (בניית אינדקס)...")
