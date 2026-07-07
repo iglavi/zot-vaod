@@ -2,12 +2,12 @@
 data/index.db
 data/*.db
 
-# פסקי דין (נתונים גולמיים) — לא נשמרים ב-git
-documents/*.docx
-documents/*.doc
-documents/*.pdf
-documents/*.txt
+# פסקי דין (נתונים גולמיים, כולל ההורדות היומיות לתת-תיקיות) — לא נשמרים ב-git
+documents/**
 !documents/.gitkeep
+
+# יומן ההרצה היומית
+daily_log.txt
 
 # פייתון
 __pycache__/

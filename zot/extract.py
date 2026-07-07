@@ -97,6 +97,49 @@ def extract_decision_date(text: str) -> str:
         return ""
 
 
+# זיהוי כותרת פסק הדין: {בית משפט} {סוג תיק} {מספר תיק} {צדדים} לפני ...
+_HEAD_RE = re.compile(
+    r"(?P<ctype>[֐-׿\"״]{2,6})\s+"
+    r"(?P<num>\d{2,6}[-/]\d{1,2}(?:-\d{2,4})?)"
+)
+_PARTIES_STOP = re.compile(r"לפנ[יי]|תיק\s+חיצוני|כב(?:ו?ד|['׳])")
+
+
+def extract_metadata(text: str) -> dict:
+    """מחלץ מטא-דאטה מגוף פסק הדין (עבור קבצים ללא שורת CSV).
+
+    מחזיר: court, case_type, case_number, parties, judge, decision_type,
+    decision_date — כל שדה best-effort, מחרוזת ריקה אם לא נמצא."""
+    out = {"court": "", "case_type": "", "case_number": "", "parties": "",
+           "judge": "", "decision_type": "", "decision_date": ""}
+    if not text:
+        return out
+    head = re.sub(r"\s+", " ", text.strip())[:600]
+
+    m = _HEAD_RE.search(head)
+    if m:
+        court = head[:m.start()].strip(" -–:")
+        court = re.sub(r"^בבית", "בית", court)
+        out["court"] = court
+        out["case_type"] = m.group("ctype").strip()
+        out["case_number"] = m.group("num").strip()
+        rest = head[m.end():]
+        stop = _PARTIES_STOP.search(rest)
+        parties = (rest[:stop.start()] if stop else rest).strip(" -–:‏‎")
+        # מסננים "תיק חיצוני: 123/2025" אם נגרר
+        parties = re.sub(r"תיק\s+חיצוני.*$", "", parties).strip(" -–:")
+        if len(parties) <= 80:
+            out["parties"] = parties
+
+    out["judge"] = extract_judge(text)
+    out["decision_date"] = extract_decision_date(text)
+    if "פסק דין" in head or "פסק-דין" in head:
+        out["decision_type"] = "פסק דין"
+    elif "החלט" in head:
+        out["decision_type"] = "החלטה"
+    return out
+
+
 def filed_date_from_case(case_number: str) -> str:
     """גוזר תאריך פתיחה משוער ממספר התיק (למשל 49000-12-25 -> 2025-12-01)."""
     if not case_number:
