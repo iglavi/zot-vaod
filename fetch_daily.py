@@ -131,6 +131,19 @@ def select_engine(user, password, domain, base):
     return None
 
 
+def find_date_folders(base: str, html: str) -> dict[str, str]:
+    """מזהה קישורי תיקיות בשם תאריך (YYYY-M-D), עם או בלי לוכסן מסיים."""
+    folders: dict[str, str] = {}
+    for h in _HREF_RE.findall(html):
+        link = urljoin(base, h)
+        seg = unquote(link.rstrip("/").rsplit("/", 1)[-1])
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", seg)
+        if m:
+            name = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+            folders.setdefault(name, link if link.endswith("/") else link + "/")
+    return folders
+
+
 def list_links(fetch, url):
     tmp = _TMP / "zot_list.html"
     status, err = fetch(url, tmp)
@@ -162,13 +175,17 @@ def main() -> int:
     engine, fetch = selected
 
     root_text = (_TMP / "zot_probe.html").read_text(encoding="utf-8", errors="ignore")
-    folders: dict[str, str] = {}
-    for h in _HREF_RE.findall(root_text):
-        link = urljoin(base, h)
-        m = _DATE_RE.search(link.rstrip("/"))
-        if m and link.endswith("/"):
-            name = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
-            folders.setdefault(name, link)
+    folders = find_date_folders(base, root_text)
+    if not folders:
+        dbg = ROOT / "debug_root.html"
+        dbg.write_text(root_text, encoding="utf-8")
+        snippet = re.sub(r"\s+", " ", root_text)[:500]
+        print("לא זוהו תיקיות תאריך בעמוד השורש.")
+        print(f"אורך העמוד שהתקבל: {len(root_text)} תווים. תחילת התוכן:")
+        print("  " + snippet)
+        print(f"שמרתי את העמוד המלא ל: {dbg}")
+        print("שלחו לי את תחילת התוכן שמודפס למעלה (או את הקובץ), ואתאים את הזיהוי.")
+        return 1
 
     ordered = sorted(folders.items())
     if only_days > 0:
