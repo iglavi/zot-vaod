@@ -4,4 +4,4 @@ anthropic>=0.49
 pdfplumber>=0.11
 pypdf>=4.0
 requests>=2.31
-curl_cffi>=0.7
+requests_ntlm>=1.2
