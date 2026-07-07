@@ -19,7 +19,6 @@
 """
 from __future__ import annotations
 
-import base64
 import os
 import re
 import sys
@@ -58,18 +57,13 @@ def load_dotenv() -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
-def make_session(user: str, password: str):
+def make_session():
     """יוצר Session שנראה כמו Chrome. מחזיר (session, engine_name)."""
-    headers = dict(_BROWSER_HEADERS)
-    # שולחים את אימות ה-Basic מראש (preemptive) בכל בקשה, ללא תלות בספרייה
-    token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
-    headers["Authorization"] = f"Basic {token}"
-
     try:
         from curl_cffi import requests as creq  # התחזות לטביעת האצבע של Chrome
 
         session = creq.Session(impersonate="chrome", timeout=90)
-        session.headers.update(headers)
+        session.headers.update(_BROWSER_HEADERS)
         return session, "curl_cffi"
     except Exception:
         pass
@@ -77,18 +71,18 @@ def make_session(user: str, password: str):
     import requests
 
     session = requests.Session()
-    session.headers.update(headers)
+    session.headers.update(_BROWSER_HEADERS)
     return session, "requests"
 
 
-def _list_links(session, url: str) -> list[str]:
-    resp = session.get(url, timeout=90)
+def _list_links(session, url: str, auth) -> list[str]:
+    resp = session.get(url, timeout=90, auth=auth)
     resp.raise_for_status()
     return [urljoin(url, h) for h in _HREF_RE.findall(resp.text)]
 
 
-def _download(session, url: str, target: Path) -> None:
-    resp = session.get(url, timeout=180)
+def _download(session, url: str, target: Path, auth) -> None:
+    resp = session.get(url, timeout=180, auth=auth)
     resp.raise_for_status()
     tmp = target.with_name(target.name + ".part")
     tmp.write_bytes(resp.content)
@@ -110,7 +104,7 @@ def main() -> int:
         return 1
 
     try:
-        session, engine = make_session(user, password)
+        session, engine = make_session()
     except ImportError:
         print("חסרה חבילת רשת. התקינו:  pip install -r requirements.txt")
         return 1
@@ -119,14 +113,35 @@ def main() -> int:
         print("שים לב: curl_cffi אינה מותקנת — ייתכן שהאתר יחסום. "
               "מומלץ להריץ:  pip install curl_cffi")
 
+    auth = (user, password)
+    print(f"פרטים שנקראו: משתמש={user}, אורך סיסמה={len(password)}, מנוע={engine}")
     print(f"מתחבר אל {base} ...")
+
+    # --- אבחון: בקשת שורש ראשונה, כולל זיהוי סוג האימות שהשרת דורש ---
     try:
-        root_links = _list_links(session, base)
+        resp = session.get(base, auth=auth, timeout=90)
     except Exception as e:  # noqa: BLE001
-        print(f"שגיאה בהתחברות/קריאת השורש: {e}")
-        print("אם מדובר בניתוק חיבור (10054) — התקינו curl_cffi:  pip install curl_cffi")
-        print("אם מדובר בקוד 401 — בדקו שם משתמש/סיסמה (אותיות גדולות/קטנות).")
+        print(f"שגיאת רשת: {e}")
+        print("אם זה ניתוק חיבור (10054) — ודאו ש-curl_cffi מותקנת:  pip install curl_cffi")
         return 1
+
+    wa = resp.headers.get("WWW-Authenticate") or resp.headers.get("www-authenticate")
+    print(f"סטטוס תגובה מהשרת: {resp.status_code}")
+    if wa:
+        print(f"סוג האימות שהשרת דורש (WWW-Authenticate): {wa}")
+
+    if resp.status_code == 401:
+        if wa and ("ntlm" in wa.lower() or "negotiate" in wa.lower()):
+            print(">> השרת דורש אימות Windows (NTLM/Negotiate), לא Basic. "
+                  "שלחו לי את השורה של WWW-Authenticate ואתקן את הקוד בהתאם.")
+        else:
+            print(">> השרת דחה את פרטי הגישה (401). בדקו שם משתמש/סיסמה.")
+        return 1
+    if resp.status_code >= 400:
+        print(f">> השרת החזיר שגיאה {resp.status_code}.")
+        return 1
+
+    root_links = [urljoin(base, h) for h in _HREF_RE.findall(resp.text)]
 
     folders: dict[str, str] = {}
     for link in root_links:
@@ -145,7 +160,7 @@ def main() -> int:
         dest = config.DOCS_DIR / name
         dest.mkdir(parents=True, exist_ok=True)
         try:
-            file_links = _list_links(session, url)
+            file_links = _list_links(session, url, auth)
         except Exception as e:  # noqa: BLE001
             print(f"  שגיאה בקריאת תיקייה {name}: {e}")
             errors += 1
@@ -159,7 +174,7 @@ def main() -> int:
                 skipped += 1
                 continue
             try:
-                _download(session, fl, target)
+                _download(session, fl, target, auth)
                 downloaded += 1
                 if downloaded % 25 == 0:
                     print(f"  ...הורדו {downloaded} קבצים")
