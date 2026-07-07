@@ -79,6 +79,7 @@ def _extract_ntlm_challenge(header_value: str):
 def _curl_cffi_ntlm_engine(user, password, domain):
     """המנוע המרכזי: curl_cffi (מתחזה ל-Chrome) + NTLM ידני דרך spnego."""
     try:
+        from curl_cffi import CurlHttpVersion
         from curl_cffi import requests as creq
         import spnego
     except ImportError:
@@ -86,13 +87,16 @@ def _curl_cffi_ntlm_engine(user, password, domain):
     session = creq.Session(impersonate="chrome", timeout=120)
     session.headers.update(_BROWSER_HEADERS)
     userspec = f"{domain}\\{user}" if domain else user
+    # NTLM דורש חיבור HTTP/1.1 יציב (הוא נשבר מעל HTTP/2 של Chrome). כפיית 1.1
+    # אינה משנה את טביעת האצבע (JA3) שה-WAF בודק — סוגי ההרחבות זהים.
+    _h1 = CurlHttpVersion.V1_1
 
     def fetch(url, out_path):
         try:
             client = spnego.client(userspec, password, protocol="ntlm")
             type1 = client.step()
             r1 = session.get(
-                url, allow_redirects=False,
+                url, allow_redirects=False, http_version=_h1,
                 headers={"Authorization": "NTLM " + base64.b64encode(type1).decode()})
             if r1.status_code != 401:
                 out_path.write_bytes(r1.content)
@@ -103,7 +107,7 @@ def _curl_cffi_ntlm_engine(user, password, domain):
                 return None, "no NTLM challenge in 401"
             type3 = client.step(challenge)
             r2 = session.get(
-                url, allow_redirects=False,
+                url, allow_redirects=False, http_version=_h1,
                 headers={"Authorization": "NTLM " + base64.b64encode(type3).decode()})
             out_path.write_bytes(r2.content)
             return r2.status_code, ""
