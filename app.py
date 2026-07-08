@@ -123,15 +123,6 @@ def sidebar():
             st.caption(f"{s['total']:,} החלטות · {s['with_documents']:,} עם טקסט מלא")
         st.caption("מנוע חכם: " + ("✅ פעיל" if ai_search.has_ai_credentials()
                                     else "🔒 דורש מפתח API"))
-        if st.button("🔄 בנייה מחדש של האינדקס"):
-            _auto_build_index.clear()
-            try:
-                with st.spinner("בונה מחדש..."):
-                    _auto_build_index()
-                st.success("האינדקס נבנה מחדש.")
-                st.rerun()
-            except Exception as e:  # noqa: BLE001
-                st.error(f"שגיאה: {e}")
 
 
 def fmt_meta(row) -> str:
