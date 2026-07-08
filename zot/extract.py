@@ -125,6 +125,17 @@ _HEAD_RE = re.compile(
 )
 _PARTIES_STOP = re.compile(r"לפנ[יי]|תיק\s+חיצוני|כב(?:ו?ד|['׳])")
 
+# התאמה נחשבת כותרת אמיתית רק אם נמצאה קרוב לתחילת המסמך. אחרת, כנראה
+# שההתאמה מקרית (איזשהו מספר בטקסט הגוף, לא מספר התיק בפועל) — וניפול
+# למקרה 'לא נמצאה כותרת' (שדות ריקים) במקום למלא אותם בזבל.
+_HEAD_MAX_POS = 150
+
+# מסמכים מסוג 'מספר בקשה:N' (החלטות ביניים) לא כוללים בטקסט הגלוי שם
+# בית משפט/סוג תיק/מספר תיק בפורמט הרגיל — רק את מספר הבקשה עצמה. בלי
+# הזיהוי הזה, _HEAD_RE היה מוצא התאמה מקרית מאוחר יותר בטקסט ומזהם את
+# כל השדות (כולל 'בית משפט') בגוש טקסט לא רלוונטי.
+_BAKASHA_RE = re.compile(r"^מספר\s+בקשה\s*:?\s*\d+")
+
 
 def extract_metadata(text: str) -> dict:
     """מחלץ מטא-דאטה מגוף פסק הדין (עבור קבצים ללא שורת CSV).
@@ -137,11 +148,13 @@ def extract_metadata(text: str) -> dict:
         return out
     head = re.sub(r"\s+", " ", text.strip())[:600]
 
-    m = _HEAD_RE.search(head)
-    if m:
+    m = None if _BAKASHA_RE.match(head) else _HEAD_RE.search(head)
+    if m and m.start() <= _HEAD_MAX_POS:
         court = head[:m.start()].strip(" -–:")
         court = re.sub(r"^בבית", "בית", court)
-        out["court"] = court
+        # עדיין מסננים שאריות זבל: שם בית משפט אמיתי קצר ולא מכיל ספרות
+        if court and len(court) <= 40 and not re.search(r"\d", court):
+            out["court"] = court
         out["case_type"] = m.group("ctype").strip()
         out["case_number"] = m.group("num").strip()
         rest = head[m.end():]
