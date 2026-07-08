@@ -1,7 +1,13 @@
-"""בניית אינדקס החיפוש (SQLite + FTS5) מתוך metadata.csv ותיקיית pסקי הדין.
+"""בניית אינדקס החיפוש (SQLite + FTS5) מתוך metadata.csv ותיקיית פסקי הדין.
 
 מריצים פעם אחת (ובכל פעם שמתווספים פסקי דין חדשים):
     python -m zot.ingest
+
+**אינקרementלי**: אם האינדקס כבר קיים ותואם למבנה הצפוי, מוסיפים רק את
+הקבצים החדשים (לפי שם קובץ) — לא קוראים מחדש קבצים שכבר אונדקסו. בנייה
+מלאה-מאפס קורית רק כשאין עדיין אינדקס, או כשמבנה הטבלה השתנה (למשל
+הוספת עמודה חדשה בעדכון קוד) — במקרה כזה חובה לקרוא הכול מחדש כדי
+שהעמודה החדשה תתמלא גם לרשומות ישנות.
 """
 from __future__ import annotations
 
@@ -32,9 +38,16 @@ COLUMN_ALIASES = {
     "file_path": ["file_path", "נתיב"],
 }
 
+# סדר העמודות ב-verdicts (בלי id, שהוא PK אוטומטי) — משמש גם ליצירת הטבלה
+# וגם לבדיקת התאמת-מבנה (כדי לדעת אם צריך בנייה מלאה מחדש).
+_VERDICT_COLUMNS = [
+    "case_number", "parties", "court", "proceeding", "case_type", "matter",
+    "decision_type", "decision_nature", "filed_date", "decision_date", "judge",
+    "filename", "file_relpath", "file_relpath_pdf", "file_relpath_docx",
+    "has_document", "full_text", "structural_summary",
+]
+
 SCHEMA = """
-DROP TABLE IF EXISTS verdicts;
-DROP TABLE IF EXISTS verdicts_fts;
 CREATE TABLE verdicts (
     id INTEGER PRIMARY KEY,
     case_number TEXT,
@@ -63,8 +76,8 @@ CREATE VIRTUAL TABLE verdicts_fts USING fts5(
 );
 """
 
-# מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה מחדש (בניגוד ל-verdicts), כך
-# שסיכום שכבר חושב לא מחושב שוב (וממילא לא משלם עליו שוב) בהרצות הבאות.
+# מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה (בין אם מלאה או אינקרementלית),
+# כך שסיכום שכבר חושב לא מחושב שוב (וממילא לא משלם עליו שוב) בהרצות הבאות.
 CACHE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_summaries (
     stem TEXT PRIMARY KEY,
@@ -86,24 +99,11 @@ def _resolve_columns(header: list[str]) -> dict[str, str]:
     return resolved
 
 
-def _index_documents(docs_dir: Path) -> dict[str, Path]:
-    """ממפה 'שם קובץ ללא סיומת' -> נתיב הקובץ, לחיבור מהיר מול ה-CSV.
-
-    סורק גם תת-תיקיות (למשל תיקיות לפי תאריך שיוצר סקריפט ההורדה)."""
-    index: dict[str, Path] = {}
-    if not docs_dir.exists():
-        return index
-    for f in docs_dir.rglob("*"):
-        if f.is_file() and f.suffix.lower() in _EXT_PRIORITY:
-            cur = index.get(f.stem)
-            if cur is None or _EXT_PRIORITY[f.suffix.lower()] < _EXT_PRIORITY[cur.suffix.lower()]:
-                index[f.stem] = f
-    return index
-
-
 def _index_by_ext(docs_dir: Path) -> dict[str, dict[str, Path]]:
-    """כמו _index_documents, אבל שומר את כל הסיומות (גם pdf וגם docx) לכל
-    שם קובץ, כדי שאפשר להציג קישורי הורדה נפרדים לכל אחד מהם."""
+    """ממפה 'שם קובץ ללא סיומת' -> {סיומת: נתיב}, לכל הסיומות שנמצאו לאותו
+    שם (docx/pdf/וכו') — כך שאפשר גם לבחור את הגרסה הכי טובה לטקסט וגם
+    להציג קישורי הורדה נפרדים לכל סיומת. סורק גם תת-תיקיות (כמו תיקיות
+    התאריך שיוצר סקריפט ההורדה)."""
     index: dict[str, dict[str, Path]] = {}
     if not docs_dir.exists():
         return index
@@ -111,6 +111,13 @@ def _index_by_ext(docs_dir: Path) -> dict[str, dict[str, Path]]:
         if f.is_file() and f.suffix.lower() in _EXT_PRIORITY:
             index.setdefault(f.stem, {})[f.suffix.lower()] = f
     return index
+
+
+def _best_doc(exts: dict[str, Path]) -> Path | None:
+    """בוחר את הקובץ הכי מתאים לחילוץ טקסט מתוך כל הסיומות שנמצאו לאותו שם."""
+    if not exts:
+        return None
+    return min(exts.items(), key=lambda kv: _EXT_PRIORITY[kv[0]])[1]
 
 
 def _dir_date(path: Path) -> str:
@@ -125,15 +132,62 @@ def _dir_date(path: Path) -> str:
     return ""
 
 
+def _schema_matches(conn: sqlite3.Connection) -> bool:
+    """בודק אם טבלת verdicts כבר קיימת עם בדיוק העמודות הצפויות. אם לא
+    (הטבלה לא קיימת, או שמבנה הקוד השתנה מאז הבנייה האחרונה) — צריך
+    בנייה מלאה מחדש, לא ניתן להסתפק בהוספה אינקרementלית."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(verdicts)").fetchall()]
+    if not cols:
+        return False
+    return cols == ["id"] + _VERDICT_COLUMNS
+
+
+def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
+    """מכניס רשומה אחת גם ל-verdicts וגם (עם אותו rowid) לאינדקס הטקסט המלא
+    (verdicts_fts) — כך שאין צורך ב'rebuild' גורף בסיום, גם כשמוסיפים
+    רשומות בודדות אינקרementלית."""
+    placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
+    cur = conn.execute(
+        f"INSERT INTO verdicts ({','.join(_VERDICT_COLUMNS)}) VALUES ({placeholders})",
+        [values[c] for c in _VERDICT_COLUMNS],
+    )
+    rowid = cur.lastrowid
+    conn.execute(
+        """INSERT INTO verdicts_fts(rowid, parties, judge, court, case_number,
+           matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)""",
+        (rowid, values["parties"], values["judge"], values["court"],
+         values["case_number"], values["matter"], values["decision_type"],
+         values["full_text"]),
+    )
+    return rowid
+
+
 def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
           db_path: Path | None = None, verbose: bool = True) -> dict:
     metadata_path = Path(metadata_path or config.METADATA_PATH)
     docs_dir = Path(docs_dir or config.DOCS_DIR)
     db_path = Path(db_path or config.DB_PATH)
-
-    doc_index = _index_documents(docs_dir)
-    by_ext = _index_by_ext(docs_dir)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(CACHE_SCHEMA)
+    summary_cache = dict(conn.execute("SELECT stem, structural_summary FROM ai_summaries").fetchall())
+
+    incremental = _schema_matches(conn)
+    if incremental:
+        existing_stems = {r[0] for r in conn.execute("SELECT filename FROM verdicts").fetchall()}
+        if verbose:
+            print(f"אינדקס קיים ותואם מבנה — מוסיף רק קבצים חדשים "
+                  f"({len(existing_stems)} כבר מאונדקסים).")
+    else:
+        conn.execute("DROP TABLE IF EXISTS verdicts")
+        conn.execute("DROP TABLE IF EXISTS verdicts_fts")
+        conn.executescript(SCHEMA)
+        existing_stems = set()
+        if verbose:
+            print("אין אינדקס תואם (ראשון, או שמבנה הקוד השתנה) — בונה הכול מחדש.")
+
+    by_ext = _index_by_ext(docs_dir)
 
     def _relpaths(stem: str) -> tuple[str, str]:
         exts = by_ext.get(stem, {})
@@ -141,11 +195,6 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         docx = exts.get(".docx") or exts.get(".doc")
         return (pdf.relative_to(docs_dir).as_posix() if pdf else "",
                 docx.relative_to(docs_dir).as_posix() if docx else "")
-
-    conn = sqlite3.connect(str(db_path))
-    conn.executescript(CACHE_SCHEMA)
-    summary_cache = dict(conn.execute("SELECT stem, structural_summary FROM ai_summaries").fetchall())
-    conn.executescript(SCHEMA)
 
     rows_inserted = 0
     docs_matched = 0
@@ -169,20 +218,22 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             if not row or not any(row):
                 continue
             case_number = cell(row, "case_number")
-            parties = cell(row, "parties")
-            court = cell(row, "court")
             file_path = cell(row, "file_path")
-
             stem = Path(file_path.replace("\\", "/")).stem if file_path else ""
-            doc = doc_index.get(stem)
 
+            if stem in covered_stems:
+                continue
+            covered_stems.add(stem)
+            if stem in existing_stems:
+                continue
+
+            doc = _best_doc(by_ext.get(stem, {}))
             full_text = ""
             judge = ""
             decision_date = ""
             has_doc = 0
             file_relpath = ""
             if doc is not None:
-                covered_stems.add(stem)
                 file_relpath = doc.relative_to(docs_dir).as_posix()
                 full_text = read_text(doc)
                 if full_text:
@@ -193,28 +244,27 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
 
             filed = cell(row, "meta_date") or filed_date_from_case(case_number)
             relpath_pdf, relpath_docx = _relpaths(stem)
-            summary = summary_cache.get(stem, "")
 
-            conn.execute(
-                """INSERT INTO verdicts
-                   (case_number, parties, court, proceeding, case_type, matter,
-                    decision_type, decision_nature, filed_date, decision_date,
-                    judge, filename, file_relpath, file_relpath_pdf,
-                    file_relpath_docx, has_document, full_text, structural_summary)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (case_number, parties, court, cell(row, "proceeding"),
-                 cell(row, "case_type"), cell(row, "matter"),
-                 cell(row, "decision_type"), cell(row, "decision_nature"),
-                 filed, decision_date, judge, stem, file_relpath, relpath_pdf,
-                 relpath_docx, has_doc, full_text, summary),
-            )
+            _insert_verdict(conn, {
+                "case_number": case_number, "parties": cell(row, "parties"),
+                "court": cell(row, "court"), "proceeding": cell(row, "proceeding"),
+                "case_type": cell(row, "case_type"), "matter": cell(row, "matter"),
+                "decision_type": cell(row, "decision_type"),
+                "decision_nature": cell(row, "decision_nature"),
+                "filed_date": filed, "decision_date": decision_date, "judge": judge,
+                "filename": stem, "file_relpath": file_relpath,
+                "file_relpath_pdf": relpath_pdf, "file_relpath_docx": relpath_docx,
+                "has_document": has_doc, "full_text": full_text,
+                "structural_summary": summary_cache.get(stem, ""),
+            })
             rows_inserted += 1
 
     # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
     # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
-    for stem, path in doc_index.items():
-        if stem in covered_stems:
+    for stem, exts in by_ext.items():
+        if stem in covered_stems or stem in existing_stems:
             continue
+        path = _best_doc(exts)
         full_text = read_text(path)
         if not full_text:
             continue
@@ -222,32 +272,31 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
         file_relpath = path.relative_to(docs_dir).as_posix()
         relpath_pdf, relpath_docx = _relpaths(stem)
-        summary = summary_cache.get(stem, "")
-        conn.execute(
-            """INSERT INTO verdicts
-               (case_number, parties, court, proceeding, case_type, matter,
-                decision_type, decision_nature, filed_date, decision_date,
-                judge, filename, file_relpath, file_relpath_pdf,
-                file_relpath_docx, has_document, full_text, structural_summary)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (md["case_number"], md["parties"], md["court"], "",
-             md["case_type"], "", md["decision_type"], "",
-             filed, md["decision_date"], md["judge"], stem, file_relpath,
-             relpath_pdf, relpath_docx, 1, full_text, summary),
-        )
+
+        _insert_verdict(conn, {
+            "case_number": md["case_number"], "parties": md["parties"],
+            "court": md["court"], "proceeding": "", "case_type": md["case_type"],
+            "matter": "", "decision_type": md["decision_type"], "decision_nature": "",
+            "filed_date": filed, "decision_date": md["decision_date"],
+            "judge": md["judge"], "filename": stem, "file_relpath": file_relpath,
+            "file_relpath_pdf": relpath_pdf, "file_relpath_docx": relpath_docx,
+            "has_document": 1, "full_text": full_text,
+            "structural_summary": summary_cache.get(stem, ""),
+        })
         rows_inserted += 1
         docs_matched += 1
 
-    # בניית אינדקס הטקסט המלא
-    conn.execute("INSERT INTO verdicts_fts(verdicts_fts) VALUES('rebuild')")
     conn.commit()
+    total_rows = conn.execute("SELECT COUNT(*) FROM verdicts").fetchone()[0]
     conn.close()
 
     stats = {"rows": rows_inserted, "documents_matched": docs_matched,
-             "documents_found": len(doc_index)}
+             "documents_found": len(by_ext), "total_rows": total_rows}
     if verbose:
-        print(f"נבנה אינדקס: {rows_inserted} רשומות, "
-              f"{docs_matched} מתוכן עם טקסט פסק דין מלא. DB: {db_path}")
+        verb = "נוספו" if incremental else "נבנה אינדקס:"
+        print(f"{verb} {rows_inserted} רשומות חדשות "
+              f"({docs_matched} מתוכן עם טקסט פסק דין מלא). "
+              f"סה\"כ במאגר כעת: {total_rows}. DB: {db_path}")
     return stats
 
 
