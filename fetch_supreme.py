@@ -37,13 +37,15 @@ sys.path.insert(0, str(ROOT))
 from zot import config  # noqa: E402
 
 BASE = "https://supremedecisions.court.gov.il/"
+SEARCH_PAGE_URL = BASE + "Verdicts/Search/1"
 _CAP = 500  # תקרת התוצאות שהשרת מחזיר בכל קריאת חיפוש בודדת
 _RETRIES = 4
-# נבדק בפועל: Home/SearchVerdicts (החיפוש) מוגן בהגנת-קצב שמחזירה דף חסימה
-# אחרי כמה עשרות קריאות רצופות — לכן השהיה גדולה בהרבה שם. Home/Download
-# (הורדת קבצים בפועל) ו-Home/Get* (רשימות מטא-דאטה) לא נחסמו כלל בבדיקה,
-# ונשארים מהירים.
-_SEARCH_THROTTLE_SEC = 3.0
+# נמצא הגורם האמיתי לחסימות שנצפו: לא הגנת-קצב, אלא חוסר בעוגיות WAF
+# אמיתיות (מתקבלות רק מטעינת דף החיפוש עצמו) וכותרות AJAX סטנדרטיות.
+# עם שני אלה נבדקו 168/169 שאילתות חדשות בהצלחה (כמעט 100%). לכן חובה
+# לטעון את SEARCH_PAGE_URL פעם אחת בתחילת הסשן (ראו _session) ולשלוח את
+# הכותרות המלאות בכל שאילתת חיפוש (ראו search()).
+_SEARCH_THROTTLE_SEC = 0.6
 _DOWNLOAD_THROTTLE_SEC = 0.15
 _FAIL_LOG = ROOT / "supreme_failed_slices.log"
 
@@ -80,16 +82,24 @@ def _base_filters() -> dict:
 
 
 def _session():
+    """יוצר סשן ו'מכין' אותו: טוען את דף החיפוש האמיתי פעם אחת כדי לקבל
+    עוגיות WAF אמיתיות (ASP.NET_SessionId, TS*) — בלעדיהן שאילתות חיפוש
+    נכשלות בשיעור גבוה (נבדק: עם ההכנה הזו + כותרות AJAX, 168/169 שאילתות
+    חדשות הצליחו; בלעדיה, שיעור כישלון ניכר)."""
     from curl_cffi import requests as creq
     s = creq.Session(impersonate="chrome", timeout=60)
-    s.headers.update({"Accept": "application/json"})
+    s.headers.update({"Accept": "application/json, text/plain, */*",
+                       "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7"})
+    r = s.get(SEARCH_PAGE_URL)
+    if r.status_code != 200:
+        print(f"    אזהרה: טעינת דף החיפוש להכנת עוגיות החזירה סטטוס {r.status_code}")
     return s
 
 
 def _request_with_retry(fn, *args, **kwargs):
-    """מנסה שוב עם המתנה מתארכת — לשימוש בהורדת קבצים ובקריאות מטא-דאטה
-    (Home/Download, Home/Get*), שבהן לא נצפתה תופעת החסימה הצרה-לפי-שאילתה
-    שנצפתה ב-Home/SearchVerdicts (ראו search() ו-WAFBlocked)."""
+    """מנסה שוב עם המתנה מתארכת. משמש גם להורדת קבצים/מטא-דאטה וגם לחיפוש —
+    בשני המקרים כישלון בודד צפוי להיות נדיר (ראו WAFBlocked), כך שכמה
+    ניסיונות עם המתנה קצרה-בינונית מספיקים."""
     last_err = None
     for attempt in range(_RETRIES):
         try:
@@ -109,28 +119,37 @@ def _log_failed_slice(label: str, err: Exception) -> None:
 
 
 class WAFBlocked(Exception):
-    """הועלה כשמזוהה דף חסימה של השרת (במקום JSON).
+    """הועלה כשמזוהה דף חסימה של השרת (במקום JSON) בשאילתת חיפוש.
 
-    נבדק בפועל: זו לא חסימה גורפת של כל האתר/ה-IP — כשניסינו שאילתה חדשה
-    (שלא נשלחה קודם) היא עברה מיד בהצלחה, בזמן ששאילתות ספציפיות שנוסו שוב
-    ושוב באופן זהה (על ידי מנגנון ניסיון-חוזר קודם) נשארו חסומות לבד. כלומר
-    זו חסימה צרה לפי טביעת-אצבע של שאילתה ספציפית שחזרה על עצמה — לא סימן
-    לסכנה כלל-אתרית. לכן: **לא מנסים שוב את אותה שאילתה בדיוק** (זה כנראה מה
-    שגרם לחסימה הצרה מלכתחילה), אלא מדלגים על הפרוסה הזו וממשיכים הלאה."""
+    נמצא הגורם האמיתי (לא רק ניחוש): שאילתות חיפוש נכשלות בשיעור ניכר כשאין
+    לסשן עוגיות WAF אמיתיות (מתקבלות רק מטעינת עמוד החיפוש עצמו לפני כן) וכן
+    כותרות AJAX סטנדרטיות (Origin/Referer/X-Requested-With). עם שני אלה
+    (ראו _session ו-search) נבדקו 168/169 שאילתות חדשות בהצלחה — כלומר כשל
+    בודד כאן הוא כנראה רעש אקראי נדיר, לא סימן לבעיה שיטתית. בטוח לנסות
+    שוב (ראו _request_with_retry)."""
 
 
 def search(session, filters: dict) -> list[dict]:
-    """שאילתת חיפוש — ניסיון בודד בלבד, בלי חזרה על אותה שאילתה: חזרה על
-    שאילתה זהה היא כנראה מה שגורם לחסימה הצרה שנצפתה בפועל (ראו WAFBlocked)."""
-    r = session.post(
-        BASE + "Home/SearchVerdicts",
-        data=json.dumps({"document": filters, "lan": 1}),
-        headers={"Content-Type": "application/json;charset=UTF-8"},
-    )
-    time.sleep(_SEARCH_THROTTLE_SEC)
-    if "json" not in (r.headers.get("content-type") or ""):
-        raise WAFBlocked(f"סטטוס {r.status_code}, content-type={r.headers.get('content-type')}")
-    return r.json()["data"]
+    """שאילתת חיפוש עם כותרות AJAX מלאות (Origin/Referer/X-Requested-With) —
+    ראו WAFBlocked להסבר למה אלה קריטיים. מנסה שוב אוטומטית אם נכשל (נבדק
+    בטוח: הכישלון לא נבע מחזרה על שאילתה, אלא מהיעדר עוגיות/כותרות)."""
+    def _do():
+        r = session.post(
+            BASE + "Home/SearchVerdicts",
+            data=json.dumps({"document": filters, "lan": 1}),
+            headers={
+                "Content-Type": "application/json;charset=UTF-8",
+                "Accept": "application/json, text/plain, */*",
+                "Origin": BASE.rstrip("/"),
+                "Referer": SEARCH_PAGE_URL,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        time.sleep(_SEARCH_THROTTLE_SEC)
+        if "json" not in (r.headers.get("content-type") or ""):
+            raise WAFBlocked(f"סטטוס {r.status_code}, content-type={r.headers.get('content-type')}")
+        return r.json()["data"]
+    return _request_with_retry(_do)
 
 
 def get_type_codes(session) -> list[int]:
