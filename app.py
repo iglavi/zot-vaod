@@ -1,4 +1,4 @@
-"""זכות ואוד — אפליקציית חיפוש הליכים משפטיים.
+"""גילוי נאות — אפליקציית חיפוש הליכים משפטיים.
 
 חיפוש במאגר החלטות ופסקי דין של בתי המשפט בישראל (מאתר נט-המשפט):
   • חיפוש רגיל — לפי שם צד, שופט, מספר תיק, בית משפט, תאריכים וטקסט חופשי.
@@ -13,7 +13,7 @@ from datetime import date
 
 import streamlit as st
 
-st.set_page_config(page_title="זכות ואוד — חיפוש הליכים משפטיים",
+st.set_page_config(page_title="גילוי נאות — חיפוש הליכים משפטיים",
                    page_icon="⚖️", layout="centered")
 
 
@@ -84,7 +84,7 @@ hr{border-color:var(--blush) !important; opacity:.5;}
 
 st.markdown("""
 <div class="main-header">
-  <h1>⚖️ זכות ואוד</h1>
+  <h1>⚖️ גילוי נאות</h1>
   <p>חיפוש במאגר החלטות ופסקי דין של בתי המשפט בישראל</p>
 </div>
 """, unsafe_allow_html=True)
@@ -117,7 +117,7 @@ def ensure_index_ui() -> bool:
 
 def sidebar():
     with st.sidebar:
-        st.markdown("### ⚖️ זכות ואוד")
+        st.markdown("### ⚖️ גילוי נאות")
         if search.db_exists():
             s = search.stats()
             st.caption(f"{s['total']:,} החלטות · {s['with_documents']:,} עם טקסט מלא")
