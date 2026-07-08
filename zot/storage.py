@@ -33,26 +33,33 @@ def _client():
     )
 
 
-def _load_manifest() -> set[str]:
-    if _MANIFEST.exists():
-        return set(_MANIFEST.read_text(encoding="utf-8").splitlines())
+def _load_manifest(manifest_path: Path) -> set[str]:
+    if manifest_path.exists():
+        return set(manifest_path.read_text(encoding="utf-8").splitlines())
     return set()
 
 
-def upload_new(verbose: bool = True) -> dict:
-    """מעלה ל-R2 כל קובץ שעדיין לא הועלה (עוקב אחרי זה בקובץ manifest מקומי)."""
+def upload_new(verbose: bool = True, docs_dir: Path | None = None,
+               manifest_path: Path | None = None, key_prefix: str = "") -> dict:
+    """מעלה ל-R2 כל קובץ שעדיין לא הועלה (עוקב אחרי זה בקובץ manifest נפרד
+    לכל מקור, כדי לאפשר כמה מקורות/תהליכים בו-זמנית בלי להתנגש).
+
+    docs_dir/manifest_path/key_prefix מאפשרים להשתמש באותה פונקציה עבור
+    מקורות שונים (למשל: החלטות בתי המשפט מול פסקי דין של העליון) — כל
+    אחד עם תיקיית מקור, יומן מעקב, ותחילית-נתיב משלו בדלי ה-R2."""
     client = _client()
     if client is None or not config.R2_BUCKET:
         if verbose:
             print("R2 לא מוגדר (חסרים משתני סביבה) — מדלג על העלאה חיצונית.")
         return {"configured": False, "uploaded": 0, "skipped": 0, "errors": 0}
 
-    uploaded_set = _load_manifest()
-    docs_dir = config.DOCS_DIR
+    docs_dir = Path(docs_dir or config.DOCS_DIR)
+    manifest_path = Path(manifest_path or _MANIFEST)
+    uploaded_set = _load_manifest(manifest_path)
     uploaded = skipped = errors = 0
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _MANIFEST.open("a", encoding="utf-8") as manifest_fh:
+    with manifest_path.open("a", encoding="utf-8") as manifest_fh:
         for f in sorted(docs_dir.rglob("*")):
             if not (f.is_file() and f.suffix.lower() in _EXT):
                 continue
@@ -60,8 +67,9 @@ def upload_new(verbose: bool = True) -> dict:
             if rel in uploaded_set:
                 skipped += 1
                 continue
+            key = key_prefix + rel
             try:
-                client.upload_file(str(f), config.R2_BUCKET, rel)
+                client.upload_file(str(f), config.R2_BUCKET, key)
             except Exception as e:  # noqa: BLE001
                 errors += 1
                 if verbose:
