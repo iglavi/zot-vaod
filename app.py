@@ -128,16 +128,6 @@ def ensure_index_ui() -> bool:
         return False
 
 
-def sidebar():
-    with st.sidebar:
-        st.markdown("### ⚖️ גילוי נאות")
-        if search.db_exists():
-            s = safe_db_call(search.stats)
-            st.caption(f"{s['total']:,} החלטות · {s['with_documents']:,} עם טקסט מלא")
-        st.caption("מנוע חכם: " + ("✅ פעיל" if ai_search.has_ai_credentials()
-                                    else "🔒 דורש מפתח API"))
-
-
 def fmt_meta(row) -> str:
     bits = []
     if row["court"]:
@@ -326,7 +316,6 @@ def tab_ai():
 
 
 # ============================ פריסה ============================
-sidebar()
 tab1, tab2 = st.tabs(["🔍 חיפוש רגיל", "✨ חיפוש חכם (AI)"])
 with tab1:
     tab_simple()
