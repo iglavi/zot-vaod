@@ -87,15 +87,13 @@ def _session():
 
 
 def _request_with_retry(fn, *args, **kwargs):
-    """מנסה שוב עם המתנה מתארכת — השרת מחזיר לפעמים תגובה ריקה באופן חולף,
-    וזה חולף אחרי המתנה קצרה. חסימת WAF לעומת זאת לא חולפת תוך שניות —
-    לכן לא מנסים שוב מיד, אלא מעלים הלאה כדי שההרצה תיעצר לגמרי."""
+    """מנסה שוב עם המתנה מתארכת — לשימוש בהורדת קבצים ובקריאות מטא-דאטה
+    (Home/Download, Home/Get*), שבהן לא נצפתה תופעת החסימה הצרה-לפי-שאילתה
+    שנצפתה ב-Home/SearchVerdicts (ראו search() ו-WAFBlocked)."""
     last_err = None
     for attempt in range(_RETRIES):
         try:
             return fn(*args, **kwargs)
-        except WAFBlocked:
-            raise
         except Exception as e:  # noqa: BLE001
             last_err = e
             time.sleep(min(2.0 * (2 ** attempt), 30.0))
@@ -111,23 +109,28 @@ def _log_failed_slice(label: str, err: Exception) -> None:
 
 
 class WAFBlocked(Exception):
-    """הועלה כשמזוהה דף חסימה של השרת (במקום JSON) — סימן להפסיק לגמרי
-    ולא להמשיך לנסות, כדי לא להאריך את החסימה."""
+    """הועלה כשמזוהה דף חסימה של השרת (במקום JSON).
+
+    נבדק בפועל: זו לא חסימה גורפת של כל האתר/ה-IP — כשניסינו שאילתה חדשה
+    (שלא נשלחה קודם) היא עברה מיד בהצלחה, בזמן ששאילתות ספציפיות שנוסו שוב
+    ושוב באופן זהה (על ידי מנגנון ניסיון-חוזר קודם) נשארו חסומות לבד. כלומר
+    זו חסימה צרה לפי טביעת-אצבע של שאילתה ספציפית שחזרה על עצמה — לא סימן
+    לסכנה כלל-אתרית. לכן: **לא מנסים שוב את אותה שאילתה בדיוק** (זה כנראה מה
+    שגרם לחסימה הצרה מלכתחילה), אלא מדלגים על הפרוסה הזו וממשיכים הלאה."""
 
 
 def search(session, filters: dict) -> list[dict]:
-    def _do():
-        r = session.post(
-            BASE + "Home/SearchVerdicts",
-            data=json.dumps({"document": filters, "lan": 1}),
-            headers={"Content-Type": "application/json;charset=UTF-8"},
-        )
-        time.sleep(_SEARCH_THROTTLE_SEC)
-        if "json" not in (r.headers.get("content-type") or ""):
-            # לא JSON = כנראה דף חסימה (WAF). אין טעם לנסות שוב מיד.
-            raise WAFBlocked(f"סטטוס {r.status_code}, content-type={r.headers.get('content-type')}")
-        return r.json()["data"]
-    return _request_with_retry(_do)
+    """שאילתת חיפוש — ניסיון בודד בלבד, בלי חזרה על אותה שאילתה: חזרה על
+    שאילתה זהה היא כנראה מה שגורם לחסימה הצרה שנצפתה בפועל (ראו WAFBlocked)."""
+    r = session.post(
+        BASE + "Home/SearchVerdicts",
+        data=json.dumps({"document": filters, "lan": 1}),
+        headers={"Content-Type": "application/json;charset=UTF-8"},
+    )
+    time.sleep(_SEARCH_THROTTLE_SEC)
+    if "json" not in (r.headers.get("content-type") or ""):
+        raise WAFBlocked(f"סטטוס {r.status_code}, content-type={r.headers.get('content-type')}")
+    return r.json()["data"]
 
 
 def get_type_codes(session) -> list[int]:
@@ -155,16 +158,14 @@ def get_max_case_num(session, year: int) -> int:
 
 
 def _safe_search(session, filters: dict, label: str) -> list[dict] | None:
-    """כמו search(), אבל אם כל הניסיונות נכשלים — רושם ל-log ומחזיר None
-    (במקום להפיל את כל ההרצה בת-הימים). None מסמן 'דלג על הפרוסה הזו'.
+    """כמו search(), אבל אם השאילתה נכשלת — רושם ל-log ומחזיר None (במקום
+    להפיל את כל ההרצה בת-הימים). None מסמן 'דלג על הפרוסה הזו'.
 
-    חסימת WAF היא שונה במהותה: היא לא תחלוף בפרוסה הבאה, לכן מועלית הלאה
-    כדי שההרצה כולה תיעצר בבקרה (main), במקום לגרור פרוסה-פרוסה במשך שעות
-    כשהחסימה עדיין פעילה."""
+    נבדק בפועל: חסימת WAF על שאילתה ספציפית לא משפיעה על שאילתות אחרות
+    (ראו הערה ב-WAFBlocked) — לכן מטופלת בדיוק כמו כל כשל אחר: מדלגים
+    ל'פרוסה' (שנה/חודש/סוג/מדור) הבאה, לא עוצרים את כל ההרצה."""
     try:
         return search(session, filters)
-    except WAFBlocked:
-        raise
     except Exception as e:  # noqa: BLE001
         _log_failed_slice(label, e)
         return None
@@ -290,14 +291,6 @@ def main() -> int:
                 if total_items % 100 == 0:
                     print(f"  ...טופלו {total_items} פריטים סה\"כ "
                           f"({total_downloaded} קבצים חדשים)")
-        except WAFBlocked as e:
-            print(f"\n!! זוהתה חסימת WAF בשרת החיפוש: {e}")
-            print("עוצר את כל ההרצה לגמרי (לא ממשיך לפרוסות הבאות) — "
-                  "המשך גרירה בזמן שהחסימה פעילה רק יאריך אותה. "
-                  "יש להריץ שוב מאוחר יותר (הריצה תמשיך מאיפה שהפסיקה).")
-            print(f"\nסיכום חלקי: {total_items} פריטים, {total_downloaded} קבצים חדשים, "
-                  f"{total_skipped} כבר קיימים, {total_errors} שגיאות.")
-            return 1
         except Exception as e:  # noqa: BLE001
             # רשת/הרצה בת-ימים: תקלה בלתי צפויה בשנה אחת לא תפיל את כל ההרצה
             _log_failed_slice(f"שנה {year} (קריסה כללית)", e)
