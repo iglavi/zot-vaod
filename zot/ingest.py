@@ -24,6 +24,11 @@ from .extract import (extract_decision_date, extract_judge, extract_metadata,
 _EXT_PRIORITY = {".docx": 0, ".doc": 1, ".txt": 2, ".pdf": 3}
 _DATE_DIR_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
 
+# מבצעים commit תקופתי (לא רק בסוף כל הריצה) — כדי שאם התהליך נעצר/נהרג
+# באמצע ריצה ארוכה, העבודה שכבר בוצעה לא תלך לאיבוד: ההרצה הבאה תמשיך
+# בדיוק מאיפה שהאחרונה נעצרה, במקום להתחיל את כל הקבצים החדשים מחדש.
+_COMMIT_EVERY = 500
+
 # מיפוי כותרות ה-CSV (בעברית) לשמות עמודות באנגלית
 COLUMN_ALIASES = {
     "court": ["בית משפט"],
@@ -258,6 +263,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                 "structural_summary": summary_cache.get(stem, ""),
             })
             rows_inserted += 1
+            if rows_inserted % _COMMIT_EVERY == 0:
+                conn.commit()
 
     # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
     # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
@@ -285,6 +292,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         })
         rows_inserted += 1
         docs_matched += 1
+        if rows_inserted % _COMMIT_EVERY == 0:
+            conn.commit()
 
     conn.commit()
     total_rows = conn.execute("SELECT COUNT(*) FROM verdicts").fetchone()[0]
