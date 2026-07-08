@@ -9,9 +9,20 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import date
 
 import streamlit as st
+
+
+def safe_db_call(fn, *args, **kwargs):
+    """מריץ שאילתת מסד-נתונים; במקרה של תקלה טכנית (למשל אי-התאמת סכימה
+    זמנית בין קוד לנתונים) מציג הודעה ידידותית במקום stack trace גולמי."""
+    try:
+        return fn(*args, **kwargs)
+    except sqlite3.Error:
+        st.error("אירעה תקלה זמנית בטעינת הנתונים. נסו לרענן את הדף בעוד רגע.")
+        st.stop()
 
 st.set_page_config(page_title="גילוי נאות — חיפוש הליכים משפטיים",
                    page_icon="⚖️", layout="centered")
@@ -121,7 +132,7 @@ def sidebar():
     with st.sidebar:
         st.markdown("### ⚖️ גילוי נאות")
         if search.db_exists():
-            s = search.stats()
+            s = safe_db_call(search.stats)
             st.caption(f"{s['total']:,} החלטות · {s['with_documents']:,} עם טקסט מלא")
         st.caption("מנוע חכם: " + ("✅ פעיל" if ai_search.has_ai_credentials()
                                     else "🔒 דורש מפתח API"))
@@ -150,7 +161,7 @@ def render_card(row):
         f'</div>', unsafe_allow_html=True)
     if row["has_document"]:
         with st.expander("📖 הצג את פסק הדין המלא"):
-            full = search.get_verdict(row["id"])
+            full = safe_db_call(search.get_verdict, row["id"])
             if full["structural_summary"]:
                 import json
                 try:
@@ -187,11 +198,11 @@ def render_card(row):
 def tab_simple():
     if not ensure_index_ui():
         return
-    s = search.stats()
+    s = safe_db_call(search.stats)
     st.caption(f"במאגר: {s['total']:,} החלטות ({s['with_documents']:,} עם טקסט מלא)")
 
-    courts = [""] + search.distinct_courts()
-    proceedings = [""] + search.distinct_proceedings()
+    courts = [""] + safe_db_call(search.distinct_courts)
+    proceedings = [""] + safe_db_call(search.distinct_proceedings)
 
     with st.form("simple_search"):
         c1, c2 = st.columns(2)
@@ -227,7 +238,7 @@ def tab_simple():
 
     page = st.session_state.get("simple_page", 0)
     per = config.RESULTS_PER_PAGE
-    rows, total = search.simple_search(**query, limit=per, offset=page * per)
+    rows, total = safe_db_call(search.simple_search, **query, limit=per, offset=page * per)
 
     if total == 0:
         st.warning("לא נמצאו תיקים תואמים.")
@@ -288,7 +299,7 @@ def tab_ai():
 
     with st.spinner("מנתח את השאלה ומאתר פסקי דין רלוונטיים..."):
         analysis = ai_search.analyze_query(client, question, today=date.today().isoformat())
-        verdicts = ai_search.retrieve(analysis)
+        verdicts = safe_db_call(ai_search.retrieve, analysis)
 
     if not verdicts:
         st.warning("לא נמצאו פסקי דין רלוונטיים לשאלה זו במאגר.")
