@@ -9,11 +9,20 @@ data/*.db-shm
 documents/**
 !documents/.gitkeep
 
+# ארכיון בית המשפט העליון (fetch_supreme.py) — נתונים גולמיים, לא נשמרים ב-git
+documents_supreme/**
+
 # יומני הרצה (מקומיים)
 daily_log.txt
 full_run_log.txt
 ingest_log.txt
 r2_upload_log.txt
+supreme_download_log.txt
+ingest_log*.txt
+summarize_full_log.txt
+summary_test_log.txt
+page_scan_log.txt
+page_count_analysis.json
 
 # מעקב מקומי אחרי קבצים שכבר הועלו ל-R2 (לא רלוונטי מחוץ למחשב הזה)
 data/.r2_uploaded.txt
