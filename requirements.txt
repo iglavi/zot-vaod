@@ -8,3 +8,4 @@ requests_ntlm>=1.2
 curl_cffi>=0.7
 pyspnego>=0.10
 playwright>=1.40
+boto3>=1.34

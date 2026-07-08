@@ -36,8 +36,26 @@ from urllib.parse import unquote, urljoin
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+
+def load_dotenv() -> None:
+    envf = ROOT / ".env"
+    if not envf.exists():
+        return
+    for line in envf.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+# חייב לרוץ *לפני* ייבוא zot.config, כי config.py קורא כמה ממשתני הסביבה
+# (כמו R2_*) פעם אחת בזמן הייבוא עצמו.
+load_dotenv()
+
 from zot import config  # noqa: E402
 from zot.ingest import build as build_index  # noqa: E402
+from zot.storage import upload_new as upload_to_r2  # noqa: E402
 
 _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 _FILE_EXT = (".pdf", ".docx", ".doc")
@@ -50,18 +68,6 @@ _BROWSER_HEADERS = {
     "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 _TMP = Path(tempfile.gettempdir())
-
-
-def load_dotenv() -> None:
-    envf = ROOT / ".env"
-    if not envf.exists():
-        return
-    for line in envf.read_text(encoding="utf-8-sig").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, val = line.split("=", 1)
-        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
 def _extract_ntlm_challenge(header_value: str):
@@ -317,6 +323,7 @@ def main() -> int:
         print(f"  תיקייה {name}: הושלמה ({len(file_links)} פריטים).")
 
     print(f"סיכום הורדה: {downloaded} קבצים חדשים, {skipped} כבר קיימים, {errors} שגיאות.")
+    upload_to_r2(verbose=True)
     print("מעדכן את מסד הנתונים (בניית אינדקס)...")
     stats = build_index(verbose=True)
     print(f"בוצע. במאגר כעת {stats['rows']} רשומות "

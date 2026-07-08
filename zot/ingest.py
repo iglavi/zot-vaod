@@ -49,6 +49,7 @@ CREATE TABLE verdicts (
     decision_date TEXT,
     judge TEXT,
     filename TEXT,
+    file_relpath TEXT,
     has_document INTEGER DEFAULT 0,
     full_text TEXT
 );
@@ -144,8 +145,10 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             judge = ""
             decision_date = ""
             has_doc = 0
+            file_relpath = ""
             if doc is not None:
                 covered_stems.add(stem)
+                file_relpath = doc.relative_to(docs_dir).as_posix()
                 full_text = read_text(doc)
                 if full_text:
                     has_doc = 1
@@ -159,12 +162,12 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                 """INSERT INTO verdicts
                    (case_number, parties, court, proceeding, case_type, matter,
                     decision_type, decision_nature, filed_date, decision_date,
-                    judge, filename, has_document, full_text)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    judge, filename, file_relpath, has_document, full_text)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (case_number, parties, court, cell(row, "proceeding"),
                  cell(row, "case_type"), cell(row, "matter"),
                  cell(row, "decision_type"), cell(row, "decision_nature"),
-                 filed, decision_date, judge, stem, has_doc, full_text),
+                 filed, decision_date, judge, stem, file_relpath, has_doc, full_text),
             )
             rows_inserted += 1
 
@@ -178,15 +181,16 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             continue
         md = extract_metadata(full_text)
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
+        file_relpath = path.relative_to(docs_dir).as_posix()
         conn.execute(
             """INSERT INTO verdicts
                (case_number, parties, court, proceeding, case_type, matter,
                 decision_type, decision_nature, filed_date, decision_date,
-                judge, filename, has_document, full_text)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                judge, filename, file_relpath, has_document, full_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (md["case_number"], md["parties"], md["court"], "",
              md["case_type"], "", md["decision_type"], "",
-             filed, md["decision_date"], md["judge"], stem, 1, full_text),
+             filed, md["decision_date"], md["judge"], stem, file_relpath, 1, full_text),
         )
         rows_inserted += 1
         docs_matched += 1

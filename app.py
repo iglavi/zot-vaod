@@ -19,7 +19,8 @@ st.set_page_config(page_title="גילוי נאות — חיפוש הליכים �
 
 def _bridge_secrets():
     """מעביר סודות של Streamlit Cloud למשתני סביבה (שאותם קורא ה-SDK של Anthropic)."""
-    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ZOT_MODEL"):
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ZOT_MODEL",
+                "R2_PUBLIC_BASE_URL"):
         if os.environ.get(key):
             continue
         try:
@@ -156,6 +157,10 @@ def render_card(row):
                 data=(full["full_text"] or "").encode("utf-8"),
                 file_name=f"{row['case_number'] or row['id']}.txt",
                 mime="text/plain", key=f"dl_{row['id']}")
+            if config.R2_PUBLIC_BASE_URL and row["file_relpath"]:
+                from urllib.parse import quote
+                url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath"])
+                st.link_button("📄 הורדת הקובץ המקורי (PDF/Word)", url)
     else:
         st.caption("ℹ️ קובץ פסק הדין המלא אינו זמין במאגר המקומי (קיימים רק פרטי המטא-דאטה).")
 

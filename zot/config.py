@@ -12,9 +12,18 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ---- נתיבי נתונים (ניתן לעקוף עם משתני סביבה) ----
+DATA_DIR = Path(os.environ.get("ZOT_DATA_DIR", BASE_DIR / "data"))
 METADATA_PATH = Path(os.environ.get("ZOT_METADATA", BASE_DIR / "data" / "metadata.csv"))
 DOCS_DIR = Path(os.environ.get("ZOT_DOCS", BASE_DIR / "documents"))
 DB_PATH = Path(os.environ.get("ZOT_DB", BASE_DIR / "data" / "index.db"))
+
+# ---- אחסון חיצוני (Cloudflare R2) לקבצי המקור (PDF/Word) ----
+# אופציונלי: אם לא מוגדר, פשוט לא מוצג קישור להורדת הקובץ המקורי.
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.environ.get("R2_BUCKET", "")
+R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
 
 # ---- הגדרות מנוע ה-AI ----
 # ברירת המחדל היא Claude Opus 4.8. אפשר להוזיל עלויות עם claude-sonnet-5.
