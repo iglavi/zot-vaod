@@ -38,8 +38,14 @@ from zot import config  # noqa: E402
 
 BASE = "https://supremedecisions.court.gov.il/"
 _CAP = 500  # תקרת התוצאות שהשרת מחזיר בכל קריאת חיפוש בודדת
-_RETRIES = 3
-_THROTTLE_SEC = 0.15  # השהיה קטנה בין קריאות — נימוס כלפי השרת
+_RETRIES = 4
+# נבדק בפועל: Home/SearchVerdicts (החיפוש) מוגן בהגנת-קצב שמחזירה דף חסימה
+# אחרי כמה עשרות קריאות רצופות — לכן השהיה גדולה בהרבה שם. Home/Download
+# (הורדת קבצים בפועל) ו-Home/Get* (רשימות מטא-דאטה) לא נחסמו כלל בבדיקה,
+# ונשארים מהירים.
+_SEARCH_THROTTLE_SEC = 3.0
+_DOWNLOAD_THROTTLE_SEC = 0.15
+_FAIL_LOG = ROOT / "supreme_failed_slices.log"
 
 DOCS_DIR = Path(os.environ.get("SUPREME_DOCS_DIR", ROOT / "documents_supreme"))
 YEAR_FROM = int(os.environ.get("SUPREME_YEAR_FROM", str(date.today().year)))
@@ -81,14 +87,32 @@ def _session():
 
 
 def _request_with_retry(fn, *args, **kwargs):
+    """מנסה שוב עם המתנה מתארכת — השרת מחזיר לפעמים תגובה ריקה באופן חולף,
+    וזה חולף אחרי המתנה קצרה. חסימת WAF לעומת זאת לא חולפת תוך שניות —
+    לכן לא מנסים שוב מיד, אלא מעלים הלאה כדי שההרצה תיעצר לגמרי."""
     last_err = None
     for attempt in range(_RETRIES):
         try:
             return fn(*args, **kwargs)
+        except WAFBlocked:
+            raise
         except Exception as e:  # noqa: BLE001
             last_err = e
-            time.sleep(1.0 * (attempt + 1))
+            time.sleep(min(2.0 * (2 ** attempt), 30.0))
     raise last_err
+
+
+def _log_failed_slice(label: str, err: Exception) -> None:
+    """רושם לקובץ נפרד פרוסה שנכשלה לחלוטין אחרי כל הניסיונות, כדי שאפשר
+    יהיה לחזור אליה ידנית מאוחר יותר — במקום להפיל את כל ההרצה (בת ימים)."""
+    with _FAIL_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {label}: {err}\n")
+    print(f"    !! נכשל לגמרי (נרשם ל-{_FAIL_LOG.name}): {label}: {err}")
+
+
+class WAFBlocked(Exception):
+    """הועלה כשמזוהה דף חסימה של השרת (במקום JSON) — סימן להפסיק לגמרי
+    ולא להמשיך לנסות, כדי לא להאריך את החסימה."""
 
 
 def search(session, filters: dict) -> list[dict]:
@@ -98,7 +122,10 @@ def search(session, filters: dict) -> list[dict]:
             data=json.dumps({"document": filters, "lan": 1}),
             headers={"Content-Type": "application/json;charset=UTF-8"},
         )
-        time.sleep(_THROTTLE_SEC)
+        time.sleep(_SEARCH_THROTTLE_SEC)
+        if "json" not in (r.headers.get("content-type") or ""):
+            # לא JSON = כנראה דף חסימה (WAF). אין טעם לנסות שוב מיד.
+            raise WAFBlocked(f"סטטוס {r.status_code}, content-type={r.headers.get('content-type')}")
         return r.json()["data"]
     return _request_with_retry(_do)
 
@@ -127,12 +154,33 @@ def get_max_case_num(session, year: int) -> int:
     return _request_with_retry(_do)
 
 
+def _safe_search(session, filters: dict, label: str) -> list[dict] | None:
+    """כמו search(), אבל אם כל הניסיונות נכשלים — רושם ל-log ומחזיר None
+    (במקום להפיל את כל ההרצה בת-הימים). None מסמן 'דלג על הפרוסה הזו'.
+
+    חסימת WAF היא שונה במהותה: היא לא תחלוף בפרוסה הבאה, לכן מועלית הלאה
+    כדי שההרצה כולה תיעצר בבקרה (main), במקום לגרור פרוסה-פרוסה במשך שעות
+    כשהחסימה עדיין פעילה."""
+    try:
+        return search(session, filters)
+    except WAFBlocked:
+        raise
+    except Exception as e:  # noqa: BLE001
+        _log_failed_slice(label, e)
+        return None
+
+
 def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[int]):
     """מחזיר (generator) את כל התוצאות לשנה נתונה, חותך לפי מימדים רק
-    כשיש צורך (כלומר רק כשפרוסה מסוימת עדיין מחזירה בדיוק 500 — סימן שיש עוד)."""
+    כשיש צורך (כלומר רק כשפרוסה מסוימת עדיין מחזירה בדיוק 500 — סימן שיש עוד).
+
+    כל שאילתה שנכשלת לחלוטין (אחרי כל הניסיונות) נרשמת ומדולגת — לא מפילה
+    את שאר ההרצה שיכולה להימשך ימים."""
     base = _base_filters()
     base["Year"] = year
-    results = search(session, base)
+    results = _safe_search(session, base, f"שנה {year}")
+    if results is None:
+        return
     if len(results) < _CAP:
         yield from results
         return
@@ -141,7 +189,9 @@ def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[
     for month in range(1, 13):
         f = dict(base)
         f["Month"] = month
-        month_results = search(session, f)
+        month_results = _safe_search(session, f, f"{year}-{month:02d}")
+        if month_results is None:
+            continue
         if len(month_results) < _CAP:
             yield from month_results
             continue
@@ -151,7 +201,9 @@ def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[
         for tcode in type_codes:
             f2 = dict(f)
             f2["CodeTypes"] = [tcode]
-            type_results = search(session, f2)
+            type_results = _safe_search(session, f2, f"{year}-{month:02d} סוג {tcode}")
+            if type_results is None:
+                continue
             if len(type_results) < _CAP:
                 for item in type_results:
                     if item["Id"] not in seen_ids:
@@ -163,10 +215,13 @@ def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[
             for mcode in mador_codes:
                 f3 = dict(f2)
                 f3["CodeMador"] = [mcode]
-                mador_results = search(session, f3)
+                label = f"{year}-{month:02d} סוג {tcode} מדור {mcode}"
+                mador_results = _safe_search(session, f3, label)
+                if mador_results is None:
+                    continue
                 if len(mador_results) >= _CAP:
-                    print(f"          אזהרה: {year}-{month:02d} סוג {tcode} מדור {mcode} "
-                          f"עדיין >={_CAP} — ייתכן פספוס תוצאות (נדיר, לא טופל אוטומטית).")
+                    print(f"          אזהרה: {label} עדיין >={_CAP} — "
+                          f"ייתכן פספוס תוצאות (נדיר, לא טופל אוטומטית).")
                 for item in mador_results:
                     if item["Id"] not in seen_ids:
                         seen_ids.add(item["Id"])
@@ -201,7 +256,7 @@ def download_one(session, item: dict) -> tuple[int, int]:
         except Exception as e:  # noqa: BLE001
             print(f"    שגיאה בהורדת {fname}.{ext}: {e}")
             continue
-        time.sleep(_THROTTLE_SEC)
+        time.sleep(_DOWNLOAD_THROTTLE_SEC)
         if r.status_code == 200 and r.content:
             target.write_bytes(r.content)
             downloaded += 1
@@ -221,19 +276,31 @@ def main() -> int:
     for year in range(YEAR_FROM, YEAR_TO + 1):
         print(f"--- שנה {year} ---")
         year_items = 0
-        for item in enumerate_year(session, year, type_codes, mador_codes):
-            year_items += 1
-            total_items += 1
-            try:
-                dl, sk = download_one(session, item)
-                total_downloaded += dl
-                total_skipped += sk
-            except Exception as e:  # noqa: BLE001
-                print(f"  שגיאה בפריט {item.get('Id')}: {e}")
-                total_errors += 1
-            if total_items % 100 == 0:
-                print(f"  ...טופלו {total_items} פריטים סה\"כ "
-                      f"({total_downloaded} קבצים חדשים)")
+        try:
+            for item in enumerate_year(session, year, type_codes, mador_codes):
+                year_items += 1
+                total_items += 1
+                try:
+                    dl, sk = download_one(session, item)
+                    total_downloaded += dl
+                    total_skipped += sk
+                except Exception as e:  # noqa: BLE001
+                    print(f"  שגיאה בפריט {item.get('Id')}: {e}")
+                    total_errors += 1
+                if total_items % 100 == 0:
+                    print(f"  ...טופלו {total_items} פריטים סה\"כ "
+                          f"({total_downloaded} קבצים חדשים)")
+        except WAFBlocked as e:
+            print(f"\n!! זוהתה חסימת WAF בשרת החיפוש: {e}")
+            print("עוצר את כל ההרצה לגמרי (לא ממשיך לפרוסות הבאות) — "
+                  "המשך גרירה בזמן שהחסימה פעילה רק יאריך אותה. "
+                  "יש להריץ שוב מאוחר יותר (הריצה תמשיך מאיפה שהפסיקה).")
+            print(f"\nסיכום חלקי: {total_items} פריטים, {total_downloaded} קבצים חדשים, "
+                  f"{total_skipped} כבר קיימים, {total_errors} שגיאות.")
+            return 1
+        except Exception as e:  # noqa: BLE001
+            # רשת/הרצה בת-ימים: תקלה בלתי צפויה בשנה אחת לא תפיל את כל ההרצה
+            _log_failed_slice(f"שנה {year} (קריסה כללית)", e)
         print(f"  שנה {year}: {year_items} פריטים.")
 
     print(f"\nסיכום: {total_items} פריטים, {total_downloaded} קבצים חדשים, "
