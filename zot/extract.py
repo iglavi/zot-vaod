@@ -24,21 +24,42 @@ _JUDGE_STOP = re.compile(
 )
 
 
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _read_docx(p: Path) -> str:
+    """קורא טקסט מלא מ-.docx ישירות מה-XML הגולמי (לא דרך python-docx
+    document.paragraphs/tables). הכרחי כי תבניות המסמכים הרשמיים של בתי
+    המשפט משתמשות ב'content controls' (שדות מילוי: שם השופט/ת, מספר
+    התיק, הצדדים) שעוטפים את הפסקה כולה ב-<w:sdt><w:sdtContent>. פסקה
+    כזו אינה צאצא ישיר של גוף המסמך, ולכן document.paragraphs מדלג עליה
+    לגמרי — מה שגרם לשדות מטא-דאטה קריטיים לצאת ריקים כמעט תמיד."""
+    import zipfile
+    from lxml import etree
+
+    with zipfile.ZipFile(str(p)) as z:
+        xml = z.read("word/document.xml")
+    root = etree.fromstring(xml)
+    paragraphs = []
+    for p_el in root.iter(f"{{{_W_NS}}}p"):
+        text = "".join(t.text or "" for t in p_el.findall(f".//{{{_W_NS}}}t"))
+        if text.strip():
+            paragraphs.append(text)
+    return "\n".join(paragraphs)
+
+
 def read_text(path: str | Path) -> str:
     """קורא טקסט מלא מקובץ pdf/docx/txt. מחזיר מחרוזת ריקה במקרה כשל."""
     p = Path(path)
     suffix = p.suffix.lower()
     try:
-        if suffix in (".docx", ".doc"):
-            import docx  # python-docx
+        if suffix == ".docx":
+            return _read_docx(p)
+        if suffix == ".doc":
+            import docx  # python-docx (לא תומך רשמית ב-.doc הישן, best-effort)
 
             document = docx.Document(str(p))
             parts = [para.text for para in document.paragraphs]
-            for table in document.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        if cell.text:
-                            parts.append(cell.text)
             return "\n".join(t for t in parts if t and t.strip())
         if suffix == ".pdf":
             return _read_pdf(p)
