@@ -28,6 +28,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import unquote, urljoin
 
@@ -160,6 +162,13 @@ def _curl_engine(user, password, domain):
     return "curl.exe --ntlm", fetch
 
 
+_ENGINE_FACTORIES = {
+    "curl_cffi+ntlm": _curl_cffi_ntlm_engine,
+    "requests_ntlm": _requests_ntlm_engine,
+    "curl.exe --ntlm": _curl_engine,
+}
+
+
 def find_date_folders(base: str, html: str) -> dict[str, str]:
     """מזהה קישורי תיקיות בשם תאריך (YYYY-M-D), עם או בלי לוכסן מסיים."""
     folders: dict[str, str] = {}
@@ -248,7 +257,39 @@ def main() -> int:
         ordered = ordered[-only_days:]
     print(f"התחברות הצליחה ({engine}). נמצאו {len(ordered)} תיקיות תאריך.")
 
+    # אפשרות להוריד כמה קבצים במקביל — כבויה כברירת מחדל (1 = טורי).
+    # נבדק: מספר חיבורים גדול יותר (6) גרם לשרת לנתק חיבורים באגרסיביות
+    # (הגנת קצב-בקשות), כך שברירת המחדל הבטוחה היא טורי. שנו ב-.env על
+    # אחריותכם אם תרצו לנסות ערך גבוה יותר.
+    concurrency = max(1, int(os.environ.get("DECISIONS_CONCURRENCY", "1") or "1"))
+    engine_factory = _ENGINE_FACTORIES.get(engine)
+    _local = threading.local()
+
+    def thread_fetch(url, out_path):
+        if engine_factory is None or concurrency <= 1:
+            return fetch(url, out_path)
+        fn = getattr(_local, "fetch", None)
+        if fn is None:
+            _, fn = engine_factory(user, password, domain)
+            _local.fetch = fn
+        return fn(url, out_path)
+
     downloaded = skipped = errors = 0
+    lock = threading.Lock()
+
+    def download_one(fl):
+        fname = unquote(fl.rsplit("/", 1)[-1])
+        target = dest / fname
+        if target.exists() and target.stat().st_size > 0:
+            return "skipped", fname, None
+        part = target.with_name(target.name + ".part")
+        status, err = thread_fetch(fl, part)
+        if status == 200 and part.exists() and part.stat().st_size > 0:
+            part.replace(target)
+            return "downloaded", fname, None
+        part.unlink(missing_ok=True)
+        return "error", fname, f"סטטוס {status} {err}"
+
     for name, url in ordered:
         dest = config.DOCS_DIR / name
         dest.mkdir(parents=True, exist_ok=True)
@@ -258,25 +299,21 @@ def main() -> int:
             print(f"  שגיאה בקריאת תיקייה {name}: {e}")
             errors += 1
             continue
-        for fl in file_links:
-            if not fl.lower().endswith(_FILE_EXT):
-                continue
-            fname = unquote(fl.rsplit("/", 1)[-1])
-            target = dest / fname
-            if target.exists() and target.stat().st_size > 0:
-                skipped += 1
-                continue
-            part = target.with_name(target.name + ".part")
-            status, err = fetch(fl, part)
-            if status == 200 and part.exists() and part.stat().st_size > 0:
-                part.replace(target)
-                downloaded += 1
-                if downloaded % 25 == 0:
-                    print(f"  ...הורדו {downloaded} קבצים")
-            else:
-                part.unlink(missing_ok=True)
-                print(f"  שגיאה בהורדת {fname}: סטטוס {status} {err}")
-                errors += 1
+        targets = [fl for fl in file_links if fl.lower().endswith(_FILE_EXT)]
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(download_one, fl) for fl in targets]
+            for fut in as_completed(futures):
+                kind, fname, err = fut.result()
+                with lock:
+                    if kind == "downloaded":
+                        downloaded += 1
+                        if downloaded % 25 == 0:
+                            print(f"  ...הורדו {downloaded} קבצים")
+                    elif kind == "skipped":
+                        skipped += 1
+                    else:
+                        errors += 1
+                        print(f"  שגיאה בהורדת {fname}: {err}")
         print(f"  תיקייה {name}: הושלמה ({len(file_links)} פריטים).")
 
     print(f"סיכום הורדה: {downloaded} קבצים חדשים, {skipped} כבר קיימים, {errors} שגיאות.")
