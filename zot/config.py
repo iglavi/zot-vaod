@@ -11,6 +11,26 @@ from pathlib import Path
 # שורש הפרויקט (התיקייה שמעל חבילת zot)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def _load_dotenv() -> None:
+    """טוען .env מקומי (אם קיים) *לפני* שקוראים משתני סביבה למטה בקובץ הזה.
+
+    נעשה כאן ולא רק ב-fetch_daily.py, כי כל מודול שמייבא את config (כולל
+    zot.storage כשמריצים אותו ישירות) צריך לקבל את אותם ערכים — לא משנה
+    מאיפה הוא נכנס."""
+    envf = BASE_DIR / ".env"
+    if not envf.exists():
+        return
+    for line in envf.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 # ---- נתיבי נתונים (ניתן לעקוף עם משתני סביבה) ----
 DATA_DIR = Path(os.environ.get("ZOT_DATA_DIR", BASE_DIR / "data"))
 METADATA_PATH = Path(os.environ.get("ZOT_METADATA", BASE_DIR / "data" / "metadata.csv"))
