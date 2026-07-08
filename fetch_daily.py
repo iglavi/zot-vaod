@@ -56,6 +56,7 @@ load_dotenv()
 from zot import config  # noqa: E402
 from zot.ingest import build as build_index  # noqa: E402
 from zot.storage import upload_new as upload_to_r2  # noqa: E402
+from zot.summarize import run as summarize_new  # noqa: E402
 
 _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 _FILE_EXT = (".pdf", ".docx", ".doc")
@@ -328,6 +329,7 @@ def main() -> int:
     stats = build_index(verbose=True)
     print(f"בוצע. במאגר כעת {stats['rows']} רשומות "
           f"({stats['documents_matched']} עם טקסט מלא).")
+    summarize_new(verbose=True)
     return 0
 
 

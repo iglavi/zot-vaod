@@ -36,6 +36,7 @@ _bridge_secrets()
 from zot import config, search  # noqa: E402
 from zot import ai_search  # noqa: E402
 from zot.ingest import build as build_index  # noqa: E402
+from zot.summarize import _CATEGORIES as SUMMARY_CATEGORIES  # noqa: E402
 
 # ============================ עיצוב ============================
 st.markdown("""
@@ -150,6 +151,18 @@ def render_card(row):
     if row["has_document"]:
         with st.expander("📖 הצג את פסק הדין המלא"):
             full = search.get_verdict(row["id"])
+            if full["structural_summary"]:
+                import json
+                try:
+                    summary = json.loads(full["structural_summary"])
+                except Exception:
+                    summary = {}
+                if summary:
+                    st.markdown("**🗂️ תמצית מובנית**")
+                    for key, label in SUMMARY_CATEGORIES.items():
+                        if summary.get(key):
+                            st.markdown(f"**{label}:** {summary[key]}")
+                    st.markdown("---")
             st.text_area("טקסט פסק הדין", value=full["full_text"], height=300,
                          key=f"txt_{row['id']}", label_visibility="collapsed")
             st.download_button(

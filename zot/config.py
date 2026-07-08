@@ -53,6 +53,12 @@ AI_MODEL = os.environ.get("ZOT_MODEL", "claude-opus-4-8")
 AI_MAX_DOCS = int(os.environ.get("ZOT_AI_MAX_DOCS", "8"))
 AI_MAX_CHARS_PER_DOC = int(os.environ.get("ZOT_AI_MAX_CHARS", "6000"))
 
+# ---- סיכום מובנה (AI) לפסקי דין ארוכים בלבד ----
+# מסמכים קצרים מ-3 עמודים (בעיקר "החלטות" טכניות) מדולגים — לא נשלחים ל-AI בכלל.
+SUMMARY_MIN_PAGES = int(os.environ.get("ZOT_SUMMARY_MIN_PAGES", "3"))
+SUMMARY_MODEL = os.environ.get("ZOT_SUMMARY_MODEL", "claude-haiku-4-5")
+SUMMARY_MAX_CHARS = int(os.environ.get("ZOT_SUMMARY_MAX_CHARS", "20000"))
+
 RESULTS_PER_PAGE = 10
 
 # מיפוי חודשים בעברית -> מספר, לחילוץ תאריכים מגוף פסק הדין

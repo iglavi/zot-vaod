@@ -53,12 +53,23 @@ CREATE TABLE verdicts (
     file_relpath_pdf TEXT,
     file_relpath_docx TEXT,
     has_document INTEGER DEFAULT 0,
-    full_text TEXT
+    full_text TEXT,
+    structural_summary TEXT
 );
 CREATE VIRTUAL TABLE verdicts_fts USING fts5(
     parties, judge, court, case_number, matter, decision_type, full_text,
     content='verdicts', content_rowid='id',
     tokenize='unicode61 remove_diacritics 2'
+);
+"""
+
+# מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה מחדש (בניגוד ל-verdicts), כך
+# שסיכום שכבר חושב לא מחושב שוב (וממילא לא משלם עליו שוב) בהרצות הבאות.
+CACHE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ai_summaries (
+    stem TEXT PRIMARY KEY,
+    structural_summary TEXT,
+    created_at TEXT
 );
 """
 
@@ -132,6 +143,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                 docx.relative_to(docs_dir).as_posix() if docx else "")
 
     conn = sqlite3.connect(str(db_path))
+    conn.executescript(CACHE_SCHEMA)
+    summary_cache = dict(conn.execute("SELECT stem, structural_summary FROM ai_summaries").fetchall())
     conn.executescript(SCHEMA)
 
     rows_inserted = 0
@@ -180,19 +193,20 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
 
             filed = cell(row, "meta_date") or filed_date_from_case(case_number)
             relpath_pdf, relpath_docx = _relpaths(stem)
+            summary = summary_cache.get(stem, "")
 
             conn.execute(
                 """INSERT INTO verdicts
                    (case_number, parties, court, proceeding, case_type, matter,
                     decision_type, decision_nature, filed_date, decision_date,
                     judge, filename, file_relpath, file_relpath_pdf,
-                    file_relpath_docx, has_document, full_text)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    file_relpath_docx, has_document, full_text, structural_summary)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (case_number, parties, court, cell(row, "proceeding"),
                  cell(row, "case_type"), cell(row, "matter"),
                  cell(row, "decision_type"), cell(row, "decision_nature"),
                  filed, decision_date, judge, stem, file_relpath, relpath_pdf,
-                 relpath_docx, has_doc, full_text),
+                 relpath_docx, has_doc, full_text, summary),
             )
             rows_inserted += 1
 
@@ -208,17 +222,18 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
         file_relpath = path.relative_to(docs_dir).as_posix()
         relpath_pdf, relpath_docx = _relpaths(stem)
+        summary = summary_cache.get(stem, "")
         conn.execute(
             """INSERT INTO verdicts
                (case_number, parties, court, proceeding, case_type, matter,
                 decision_type, decision_nature, filed_date, decision_date,
                 judge, filename, file_relpath, file_relpath_pdf,
-                file_relpath_docx, has_document, full_text)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                file_relpath_docx, has_document, full_text, structural_summary)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (md["case_number"], md["parties"], md["court"], "",
              md["case_type"], "", md["decision_type"], "",
              filed, md["decision_date"], md["judge"], stem, file_relpath,
-             relpath_pdf, relpath_docx, 1, full_text),
+             relpath_pdf, relpath_docx, 1, full_text, summary),
         )
         rows_inserted += 1
         docs_matched += 1
