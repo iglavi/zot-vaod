@@ -50,6 +50,8 @@ CREATE TABLE verdicts (
     judge TEXT,
     filename TEXT,
     file_relpath TEXT,
+    file_relpath_pdf TEXT,
+    file_relpath_docx TEXT,
     has_document INTEGER DEFAULT 0,
     full_text TEXT
 );
@@ -88,6 +90,18 @@ def _index_documents(docs_dir: Path) -> dict[str, Path]:
     return index
 
 
+def _index_by_ext(docs_dir: Path) -> dict[str, dict[str, Path]]:
+    """כמו _index_documents, אבל שומר את כל הסיומות (גם pdf וגם docx) לכל
+    שם קובץ, כדי שאפשר להציג קישורי הורדה נפרדים לכל אחד מהם."""
+    index: dict[str, dict[str, Path]] = {}
+    if not docs_dir.exists():
+        return index
+    for f in docs_dir.rglob("*"):
+        if f.is_file() and f.suffix.lower() in _EXT_PRIORITY:
+            index.setdefault(f.stem, {})[f.suffix.lower()] = f
+    return index
+
+
 def _dir_date(path: Path) -> str:
     """מחזיר תאריך ISO משם תיקיית-האב אם הוא בפורמט YYYY-M-D (תיקיות ההורדה היומית)."""
     m = _DATE_DIR_RE.match(path.parent.name)
@@ -107,7 +121,15 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     db_path = Path(db_path or config.DB_PATH)
 
     doc_index = _index_documents(docs_dir)
+    by_ext = _index_by_ext(docs_dir)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _relpaths(stem: str) -> tuple[str, str]:
+        exts = by_ext.get(stem, {})
+        pdf = exts.get(".pdf")
+        docx = exts.get(".docx") or exts.get(".doc")
+        return (pdf.relative_to(docs_dir).as_posix() if pdf else "",
+                docx.relative_to(docs_dir).as_posix() if docx else "")
 
     conn = sqlite3.connect(str(db_path))
     conn.executescript(SCHEMA)
@@ -157,17 +179,20 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                     decision_date = extract_decision_date(full_text)
 
             filed = cell(row, "meta_date") or filed_date_from_case(case_number)
+            relpath_pdf, relpath_docx = _relpaths(stem)
 
             conn.execute(
                 """INSERT INTO verdicts
                    (case_number, parties, court, proceeding, case_type, matter,
                     decision_type, decision_nature, filed_date, decision_date,
-                    judge, filename, file_relpath, has_document, full_text)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    judge, filename, file_relpath, file_relpath_pdf,
+                    file_relpath_docx, has_document, full_text)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (case_number, parties, court, cell(row, "proceeding"),
                  cell(row, "case_type"), cell(row, "matter"),
                  cell(row, "decision_type"), cell(row, "decision_nature"),
-                 filed, decision_date, judge, stem, file_relpath, has_doc, full_text),
+                 filed, decision_date, judge, stem, file_relpath, relpath_pdf,
+                 relpath_docx, has_doc, full_text),
             )
             rows_inserted += 1
 
@@ -182,15 +207,18 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         md = extract_metadata(full_text)
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
         file_relpath = path.relative_to(docs_dir).as_posix()
+        relpath_pdf, relpath_docx = _relpaths(stem)
         conn.execute(
             """INSERT INTO verdicts
                (case_number, parties, court, proceeding, case_type, matter,
                 decision_type, decision_nature, filed_date, decision_date,
-                judge, filename, file_relpath, has_document, full_text)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                judge, filename, file_relpath, file_relpath_pdf,
+                file_relpath_docx, has_document, full_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (md["case_number"], md["parties"], md["court"], "",
              md["case_type"], "", md["decision_type"], "",
-             filed, md["decision_date"], md["judge"], stem, file_relpath, 1, full_text),
+             filed, md["decision_date"], md["judge"], stem, file_relpath,
+             relpath_pdf, relpath_docx, 1, full_text),
         )
         rows_inserted += 1
         docs_matched += 1

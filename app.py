@@ -142,11 +142,11 @@ def fmt_meta(row) -> str:
 
 def render_card(row):
     st.markdown(
-        f"""<div class="result-card">
-          <div class="result-number">תיק מס׳ {row['case_number']}</div>
-          <div class="result-name">{row['parties'] or '—'}</div>
-          <div class="result-meta">{fmt_meta(row)}</div>
-        </div>""", unsafe_allow_html=True)
+        f'<div class="result-card">'
+        f'<div class="result-number">תיק מס׳ {row["case_number"]}</div>'
+        f'<div class="result-name">{row["parties"] or "—"}</div>'
+        f'<div class="result-meta">{fmt_meta(row)}</div>'
+        f'</div>', unsafe_allow_html=True)
     if row["has_document"]:
         with st.expander("📖 הצג את פסק הדין המלא"):
             full = search.get_verdict(row["id"])
@@ -157,10 +157,15 @@ def render_card(row):
                 data=(full["full_text"] or "").encode("utf-8"),
                 file_name=f"{row['case_number'] or row['id']}.txt",
                 mime="text/plain", key=f"dl_{row['id']}")
-            if config.R2_PUBLIC_BASE_URL and row["file_relpath"]:
+            if config.R2_PUBLIC_BASE_URL:
                 from urllib.parse import quote
-                url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath"])
-                st.link_button("📄 הורדת הקובץ המקורי (PDF/Word)", url)
+                c1, c2 = st.columns(2)
+                if row["file_relpath_pdf"]:
+                    url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_pdf"])
+                    c1.link_button("📄 הורדת PDF", url)
+                if row["file_relpath_docx"]:
+                    url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_docx"])
+                    c2.link_button("📝 הורדת Word", url)
     else:
         st.caption("ℹ️ קובץ פסק הדין המלא אינו זמין במאגר המקומי (קיימים רק פרטי המטא-דאטה).")
 
