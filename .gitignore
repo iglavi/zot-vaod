@@ -9,8 +9,17 @@ data/*.db-shm
 documents/**
 !documents/.gitkeep
 
-# יומן ההרצה היומית
+# יומני הרצה (מקומיים)
 daily_log.txt
+full_run_log.txt
+ingest_log.txt
+r2_upload_log.txt
+
+# מעקב מקומי אחרי קבצים שכבר הועלו ל-R2 (לא רלוונטי מחוץ למחשב הזה)
+data/.r2_uploaded.txt
+
+# הגדרות מקומיות של Claude Code (לא חלק מהפרויקט)
+.claude/
 
 # פייתון
 __pycache__/
