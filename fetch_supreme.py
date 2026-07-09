@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import sys
@@ -190,6 +191,21 @@ def _safe_search(session, filters: dict, label: str) -> list[dict] | None:
         return None
 
 
+def _month_range_filters(base: dict, year: int, month: int) -> dict:
+    """מחזיר עותק של הפילטרים עם טווח תאריכי-פרסום (PublishFrom/PublishTo)
+    לחודש נתון — לא באמצעות שדה 'Month'.
+
+    נמצא בבדיקה ישירה: שדה 'Month' מחזיר 0 תוצאות עבור רוב הרשומות מלפני
+    2025 (כנראה שדה שלא מאוכלס באופן עקבי ברשומות ישנות/מיובאות), גם
+    כששאילתת Year בלבד לאותה שנה מחזירה תוצאות תקינות. טווח PublishFrom/
+    PublishTo עובד בעקביות לכל השנים שנבדקו (ישנות וחדשות כאחד)."""
+    f = dict(base)
+    last_day = calendar.monthrange(year, month)[1]
+    f["PublishFrom"] = f"{year:04d}-{month:02d}-01T00:00:00"
+    f["PublishTo"] = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
+    return f
+
+
 def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[int]):
     """מחזיר (generator) את כל התוצאות לשנה נתונה, חותך לפי מימדים רק
     כשיש צורך (כלומר רק כשפרוסה מסוימת עדיין מחזירה בדיוק 500 — סימן שיש עוד).
@@ -207,8 +223,7 @@ def enumerate_year(session, year: int, type_codes: list[int], mador_codes: list[
 
     print(f"    שנה {year}: >={_CAP} תוצאות, חותך לפי חודש...")
     for month in range(1, 13):
-        f = dict(base)
-        f["Month"] = month
+        f = _month_range_filters(base, year, month)
         month_results = _safe_search(session, f, f"{year}-{month:02d}")
         if month_results is None:
             continue
