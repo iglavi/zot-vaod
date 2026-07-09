@@ -31,7 +31,8 @@ st.set_page_config(page_title="גילוי נאות — חיפוש הליכים �
 def _bridge_secrets():
     """מעביר סודות של Streamlit Cloud למשתני סביבה (שאותם קורא ה-SDK של Anthropic)."""
     for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ZOT_MODEL",
-                "R2_PUBLIC_BASE_URL"):
+                "R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID",
+                "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
         if os.environ.get(key):
             continue
         try:
@@ -104,6 +105,14 @@ st.markdown("""
 
 
 # ============================ אינדקס ============================
+@st.cache_resource(show_spinner=False, ttl=3600)
+def _sync_index_from_r2():
+    """מוריד/מעדכן את index.db מ-R2 (הקובץ גדול מדי בשביל git). מטמון
+    לשעה כדי לא לבדוק מול R2 בכל אינטראקציה של כל משתמש."""
+    from zot.storage import sync_index
+    return sync_index()
+
+
 @st.cache_resource(show_spinner=False)
 def _auto_build_index():
     """בונה את האינדקס פעם אחת לכל הרצת שרת (למשל בעלייה ראשונה בענן)."""
@@ -111,7 +120,9 @@ def _auto_build_index():
 
 
 def ensure_index_ui() -> bool:
-    """מוודא שקיים אינדקס; אם חסר — בונה אותו אוטומטית. מחזיר True אם מוכן."""
+    """מוודא שקיים אינדקס עדכני; מנסה קודם להוריד/לעדכן מ-R2, ורק אם זה
+    לא זמין נופל לבניה מקומית מהמסמכים הגולמיים. מחזיר True אם מוכן."""
+    _sync_index_from_r2()
     if search.db_exists():
         return True
     if not config.METADATA_PATH.exists():

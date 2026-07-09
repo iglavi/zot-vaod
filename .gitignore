@@ -1,6 +1,9 @@
-# אינדקס החיפוש (data/index.db) כן נשמר ב-git: ההרצה היומית דוחפת אותו
-# אוטומטית, וזה מה שמעדכן את האתר הציבורי (Streamlit Cloud) בלי להעלות
-# את קבצי ה-PDF/Word הגולמיים. שאר קבצי ה-DB (למשל גיבויים זמניים) מוחרגים.
+# אינדקס החיפוש (data/index.db) חדל להישמר ב-git: הקובץ חרג מ-100MB
+# (מגבלת הגודל הקשיחה של GitHub לקובץ בודד). הוא מתארח ב-R2 במקום
+# (zot.storage.upload_index/sync_index) — האתר מוריד אותו משם בהפעלה.
+data/index.db
+data/index.db.bak*
+data/.*.synced_etag
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
@@ -13,6 +16,12 @@ documents/**
 documents_supreme/**
 
 # יומני הרצה (מקומיים)
+*_log.txt
+*_log2.txt
+*_log3.txt
+*_err.txt
+*_err2.txt
+*_err3.txt
 daily_log.txt
 full_run_log.txt
 ingest_log.txt
@@ -23,9 +32,11 @@ summarize_full_log.txt
 summary_test_log.txt
 page_scan_log.txt
 page_count_analysis.json
+supreme_failed_slices*.log
 
 # מעקב מקומי אחרי קבצים שכבר הועלו ל-R2 (לא רלוונטי מחוץ למחשב הזה)
 data/.r2_uploaded.txt
+data/.r2_uploaded_supreme.txt
 
 # הגדרות מקומיות של Claude Code (לא חלק מהפרויקט)
 .claude/
