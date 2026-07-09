@@ -238,6 +238,24 @@ def list_links(fetch, url):
     return [urljoin(url, h) for h in _HREF_RE.findall(text)]
 
 
+def _other_process_running(needle: str) -> bool:
+    """בודק אם תהליך python אחר (לא אני) כבר מריץ סקריפט שמכיל את needle
+    בשורת הפקודה שלו — כדי למנוע התנגשות בין ההרצה היומית המתוזמנת לבין
+    תהליכי רקע ארוכי-טווח (למשל השלמת העלאת R2 שיכולה לקחת ימים)."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+             f"Where-Object {{ $_.CommandLine -like '*{needle}*' -and "
+             f"$_.ProcessId -ne {os.getpid()} }} | "
+             "Select-Object -ExpandProperty ProcessId"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return bool(out.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main() -> int:
     load_dotenv()
     base = os.environ.get("DECISIONS_URL", "https://decisions.court.gov.il/").rstrip("/") + "/"
@@ -324,12 +342,24 @@ def main() -> int:
         print(f"  תיקייה {name}: הושלמה ({len(file_links)} פריטים).")
 
     print(f"סיכום הורדה: {downloaded} קבצים חדשים, {skipped} כבר קיימים, {errors} שגיאות.")
-    upload_to_r2(verbose=True)
-    print("מעדכן את מסד הנתונים (בניית אינדקס)...")
-    stats = build_index(verbose=True)
-    print(f"בוצע. במאגר כעת {stats['rows']} רשומות "
-          f"({stats['documents_matched']} עם טקסט מלא).")
-    summarize_new(verbose=True)
+
+    if _other_process_running("zot.storage"):
+        print("תהליך העלאת R2 אחר כבר רץ ברקע — מדלג על העלאה כאן (ייתפס בהרצה שלו).")
+    else:
+        upload_to_r2(verbose=True)
+
+    if _other_process_running("ingest_loop.py") or _other_process_running("zot.ingest"):
+        print("תהליך בניית אינדקס אחר כבר רץ ברקע — מדלג על בנייה כאן (ייתפס בהרצה שלו).")
+    else:
+        print("מעדכן את מסד הנתונים (בניית אינדקס)...")
+        stats = build_index(verbose=True)
+        print(f"בוצע. במאגר כעת {stats['rows']} רשומות "
+              f"({stats['documents_matched']} עם טקסט מלא).")
+
+    # סיכום AI עולה כסף אמיתי (קריאות API) — לא רצים אוטומטית כברירת מחדל.
+    # להפעיל: משתנה סביבה RUN_DAILY_SUMMARIZE=1.
+    if os.environ.get("RUN_DAILY_SUMMARIZE") == "1":
+        summarize_new(verbose=True)
     return 0
 
 
