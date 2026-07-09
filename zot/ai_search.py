@@ -128,19 +128,26 @@ def _build_context(verdicts) -> str:
     return "\n\n".join(blocks)
 
 
-def answer_stream(client, question: str, verdicts):
-    """שלב 2ב: מחזיר גנרטור של קטעי טקסט (streaming) עם התשובה המנומקת."""
+def answer_stream(client, question: str, verdicts, history: list[dict] | None = None):
+    """שלב 2ב: מחזיר גנרטור של קטעי טקסט (streaming) עם התשובה המנומקת.
+
+    history מאפשר שיחת המשך: רשימת תורות קודמות ({"role": "user"/"assistant",
+    "content": טקסט}) בלי הקשר פסקי-הדין המלא של תורות קודמות (רק השאלה
+    והתשובה) — כדי לשמור את ההיסטוריה קומפקטית וזולה, תוך שהמודל עדיין
+    "זוכר" את מהלך השיחה."""
     context = _build_context(verdicts)
     user_content = (
-        f"פסקי הדין הרלוונטיים:\n\n{context}\n\n"
+        f"פסקי הדין הרלוונטיים לשאלה הנוכחית:\n\n{context}\n\n"
         f"===\n\nהשאלה: {question}\n\n"
-        "ענה על השאלה על סמך פסקי הדין שלמעלה בלבד, עם הפניות למספרי התיקים."
+        "ענה על השאלה על סמך פסקי הדין שלמעלה (ובהתחשב בהקשר השיחה הקודמת, "
+        "אם רלוונטי), עם הפניות למספרי התיקים."
     )
+    messages = list(history or []) + [{"role": "user", "content": user_content}]
     with client.messages.stream(
         model=config.AI_MODEL,
         max_tokens=4000,
         system=_SYSTEM_ANSWER,
-        messages=[{"role": "user", "content": user_content}],
+        messages=messages,
     ) as stream:
         for chunk in stream.text_stream:
             yield chunk
