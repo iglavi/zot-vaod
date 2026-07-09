@@ -12,9 +12,16 @@
 """
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import config
+
+# מספר העלאות מקבילות ל-R2. בניגוד להורדות מ-decisions.court.gov.il (ששם
+# צריך זהירות בגלל WAF שחוסם התנהגות לא-אנושית), R2 הוא שירות ענן חזק
+# שמיועד לעומס מקביל — אין סיבה להעלות קובץ-אחר-קובץ.
+_UPLOAD_WORKERS = 10
 
 _MANIFEST = config.DATA_DIR / ".r2_uploaded.txt"
 _EXT = (".pdf", ".docx", ".doc")
@@ -46,8 +53,10 @@ def _load_manifest(manifest_path: Path) -> set[str]:
 
 def upload_new(verbose: bool = True, docs_dir: Path | None = None,
                manifest_path: Path | None = None, key_prefix: str = "") -> dict:
-    """מעלה ל-R2 כל קובץ שעדיין לא הועלה (עוקב אחרי זה בקובץ manifest נפרד
-    לכל מקור, כדי לאפשר כמה מקורות/תהליכים בו-זמנית בלי להתנגש).
+    """מעלה ל-R2 כל קובץ שעדיין לא הועלה, במקביל (כמה קבצים בו-זמנית —
+    R2 שירות ענן חזק, לא רגיש לזה כמו אתרים ממשלתיים מוגני-WAF). עוקב
+    אחרי מה שכבר הועלה בקובץ manifest נפרד לכל מקור, כדי לאפשר כמה
+    מקורות/תהליכים בו-זמנית בלי להתנגש.
 
     docs_dir/manifest_path/key_prefix מאפשרים להשתמש באותה פונקציה עבור
     מקורות שונים (למשל: החלטות בתי המשפט מול פסקי דין של העליון) — כל
@@ -61,28 +70,47 @@ def upload_new(verbose: bool = True, docs_dir: Path | None = None,
     docs_dir = Path(docs_dir or config.DOCS_DIR)
     manifest_path = Path(manifest_path or _MANIFEST)
     uploaded_set = _load_manifest(manifest_path)
-    uploaded = skipped = errors = 0
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with manifest_path.open("a", encoding="utf-8") as manifest_fh:
-        for f in sorted(docs_dir.rglob("*")):
-            if not (f.is_file() and f.suffix.lower() in _EXT):
-                continue
-            rel = f.relative_to(docs_dir).as_posix()
-            if rel in uploaded_set:
-                skipped += 1
-                continue
-            key = key_prefix + rel
-            try:
-                client.upload_file(str(f), config.R2_BUCKET, key)
-            except Exception as e:  # noqa: BLE001
-                errors += 1
-                if verbose:
-                    print(f"  שגיאה בהעלאת {rel}: {e}")
-                continue
-            manifest_fh.write(rel + "\n")
-            uploaded_set.add(rel)
-            uploaded += 1
+    todo = []
+    skipped = 0
+    for f in sorted(docs_dir.rglob("*")):
+        if not (f.is_file() and f.suffix.lower() in _EXT):
+            continue
+        rel = f.relative_to(docs_dir).as_posix()
+        if rel in uploaded_set:
+            skipped += 1
+            continue
+        todo.append((f, rel))
+
+    uploaded = errors = 0
+    lock = threading.Lock()
+    manifest_fh = manifest_path.open("a", encoding="utf-8")
+
+    def _upload_one(item):
+        f, rel = item
+        client.upload_file(str(f), config.R2_BUCKET, key_prefix + rel)
+        return rel
+
+    try:
+        with ThreadPoolExecutor(max_workers=_UPLOAD_WORKERS) as pool:
+            futures = {pool.submit(_upload_one, item): item for item in todo}
+            for fut in as_completed(futures):
+                f, rel = futures[fut]
+                try:
+                    fut.result()
+                except Exception as e:  # noqa: BLE001
+                    with lock:
+                        errors += 1
+                    if verbose:
+                        print(f"  שגיאה בהעלאת {rel}: {e}")
+                    continue
+                with lock:
+                    manifest_fh.write(rel + "\n")
+                    manifest_fh.flush()
+                    uploaded += 1
+    finally:
+        manifest_fh.close()
 
     if verbose:
         print(f"העלאה ל-R2: {uploaded} קבצים חדשים, {skipped} כבר הועלו, {errors} שגיאות.")
