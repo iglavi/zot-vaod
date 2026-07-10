@@ -36,12 +36,19 @@ def _client():
     if not (config.R2_ACCOUNT_ID and config.R2_ACCESS_KEY_ID and config.R2_SECRET_ACCESS_KEY):
         return None
     import boto3  # ייבוא עצל: לא נדרש אם R2 לא מוגדר
+    from botocore.config import Config
+
+    # index.db הוא קובץ גדול (מאות MB) — timeout ברירת המחדל של boto3
+    # (60 שניות) עלול לא להספיק להורדה שלו מתשתית מוגבלת כמו Streamlit
+    # Cloud, מה שגרם לכשל שקט (נתפס כ-Exception ונופל בחזרה לעותק ישן).
     return boto3.client(
         "s3",
         endpoint_url=f"https://{config.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
         aws_access_key_id=config.R2_ACCESS_KEY_ID,
         aws_secret_access_key=config.R2_SECRET_ACCESS_KEY,
         region_name="auto",
+        config=Config(connect_timeout=60, read_timeout=600,
+                      retries={"max_attempts": 3, "mode": "adaptive"}),
     )
 
 
@@ -144,7 +151,8 @@ def sync_index(local_path: Path | None = None) -> bool:
     marker = local_path.parent / f".{local_path.name}.synced_etag"
     try:
         remote_etag = client.head_object(Bucket=config.R2_BUCKET, Key=INDEX_KEY)["ETag"]
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        print(f"sync_index: head_object נכשל ({e}) — משתמש בעותק המקומי הקיים אם יש.")
         return local_path.exists()
 
     local_etag = marker.read_text(encoding="utf-8").strip() if marker.exists() else None
@@ -158,7 +166,8 @@ def sync_index(local_path: Path | None = None) -> bool:
         tmp.replace(local_path)
         marker.write_text(remote_etag, encoding="utf-8")
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        print(f"sync_index: הורדת index.db מ-R2 נכשלה ({e}) — משתמש בעותק המקומי הישן אם יש.")
         return local_path.exists()
 
 
