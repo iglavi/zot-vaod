@@ -21,6 +21,12 @@ from zot import ingest  # noqa: E402
 
 SLEEP_BETWEEN_PASSES_SEC = 600  # 10 דקות
 
+# מסמכי בית המשפט העליון: תיקייה נפרדת, מועלים ל-R2 תחת תחילית 'supreme/'
+# (ראו upload_supreme_to_r2.py) — צריך את אותה תחילית כאן כדי שקישורי
+# ההורדה בממשק יצביעו לקובץ הנכון בדלי.
+SUPREME_DOCS_DIR = ROOT / "documents_supreme"
+SUPREME_PREFIX = "supreme/"
+
 
 def _other_ingest_running() -> bool:
     """בודק שאין כבר הרצה חד-פעמית של zot.ingest פעילה (כדי לא לכתוב
@@ -43,7 +49,7 @@ def main() -> int:
 
     while True:
         try:
-            ingest.build()
+            ingest.build(extra_sources=[(SUPREME_DOCS_DIR, SUPREME_PREFIX)])
         except Exception as e:  # noqa: BLE001
             print(f"שגיאה בבניית האינדקס: {e}")
         time.sleep(SLEEP_BETWEEN_PASSES_SEC)

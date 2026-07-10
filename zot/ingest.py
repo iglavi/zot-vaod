@@ -126,8 +126,11 @@ def _best_doc(exts: dict[str, Path]) -> Path | None:
 
 
 def _dir_date(path: Path) -> str:
-    """מחזיר תאריך ISO משם תיקיית-האב אם הוא בפורמט YYYY-M-D (תיקיות ההורדה היומית)."""
-    m = _DATE_DIR_RE.match(path.parent.name)
+    """מחזיר תאריך ISO משם תיקיית-האב אם הוא **בדיוק** בפורמט YYYY-M-D (תיקיות
+    ההורדה היומית של decisions.court.gov.il). fullmatch (לא match) חשוב:
+    תיקיות בית המשפט העליון נקראות למשל '2024-10-1648-1-1' — עם match
+    בלבד זה היה מזוהה בטעות כתאריך 2024-10-1648 (יום לא תקין)."""
+    m = _DATE_DIR_RE.fullmatch(path.parent.name)
     if m:
         y, mo, d = (int(x) for x in m.groups())
         try:
@@ -168,11 +171,17 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
 
 
 def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
-          db_path: Path | None = None, verbose: bool = True) -> dict:
+          db_path: Path | None = None, verbose: bool = True,
+          extra_sources: list[tuple[Path, str]] | None = None) -> dict:
+    """extra_sources: מקורות מסמכים נוספים מעבר לארכיון הראשי (decisions.
+    court.gov.il) — למשל בית המשפט העליון. כל איבר הוא (תיקיית-מקור,
+    תחילית-מפתח-R2), כדי שקישורי ההורדה (file_relpath_pdf/docx) יצביעו
+    לקובץ הנכון בדלי (שם כל מקור מועלה תחת תחילית משלו — ראו zot.storage)."""
     metadata_path = Path(metadata_path or config.METADATA_PATH)
     docs_dir = Path(docs_dir or config.DOCS_DIR)
     db_path = Path(db_path or config.DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    extra_sources = extra_sources or []
 
     conn = sqlite3.connect(str(db_path))
     conn.executescript(CACHE_SCHEMA)
@@ -200,6 +209,18 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         docx = exts.get(".docx") or exts.get(".doc")
         return (pdf.relative_to(docs_dir).as_posix() if pdf else "",
                 docx.relative_to(docs_dir).as_posix() if docx else "")
+
+    # מקורות נוספים (כמו בית המשפט העליון): stem -> (תיקיית-מקור,
+    # תחילית-R2, {סיומת: נתיב}). המקור הראשי מטופל בנפרד למעלה (גם
+    # ל-CSV וגם לתאריך-מתיקייה), אז כאן רק המקורות הנוספים.
+    extra_by_source = [(src_dir, prefix, _index_by_ext(src_dir))
+                       for src_dir, prefix in extra_sources]
+
+    def _relpaths_extra(src_dir: Path, prefix: str, exts: dict) -> tuple[str, str]:
+        pdf = exts.get(".pdf")
+        docx = exts.get(".docx") or exts.get(".doc")
+        return (prefix + pdf.relative_to(src_dir).as_posix() if pdf else "",
+                prefix + docx.relative_to(src_dir).as_posix() if docx else "")
 
     rows_inserted = 0
     docs_matched = 0
@@ -266,20 +287,16 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             if rows_inserted % _COMMIT_EVERY == 0:
                 conn.commit()
 
-    # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
-    # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
-    for stem, exts in by_ext.items():
-        if stem in covered_stems or stem in existing_stems:
-            continue
-        path = _best_doc(exts)
+    def _ingest_plain(stem: str, path: Path, file_relpath: str,
+                      relpath_pdf: str, relpath_docx: str) -> bool:
+        """מחלץ מטא-דאטה מגוף המסמך ומכניס רשומה, עבור קובץ שאינו מכוסה
+        ב-CSV (הורדות יומיות/בית המשפט העליון). מחזיר True אם הוכנס."""
+        nonlocal rows_inserted, docs_matched
         full_text = read_text(path)
         if not full_text:
-            continue
+            return False
         md = extract_metadata(full_text)
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
-        file_relpath = path.relative_to(docs_dir).as_posix()
-        relpath_pdf, relpath_docx = _relpaths(stem)
-
         _insert_verdict(conn, {
             "case_number": md["case_number"], "parties": md["parties"],
             "court": md["court"], "proceeding": "", "case_type": md["case_type"],
@@ -294,13 +311,36 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         docs_matched += 1
         if rows_inserted % _COMMIT_EVERY == 0:
             conn.commit()
+        return True
+
+    # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
+    # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
+    for stem, exts in by_ext.items():
+        if stem in covered_stems or stem in existing_stems:
+            continue
+        path = _best_doc(exts)
+        file_relpath = path.relative_to(docs_dir).as_posix()
+        relpath_pdf, relpath_docx = _relpaths(stem)
+        _ingest_plain(stem, path, file_relpath, relpath_pdf, relpath_docx)
+
+    # ===== מקורות נוספים (בית המשפט העליון וכד') =====
+    documents_found = len(by_ext)
+    for src_dir, prefix, src_by_ext in extra_by_source:
+        documents_found += len(src_by_ext)
+        for stem, exts in src_by_ext.items():
+            if stem in covered_stems or stem in existing_stems:
+                continue
+            path = _best_doc(exts)
+            file_relpath = prefix + path.relative_to(src_dir).as_posix()
+            relpath_pdf, relpath_docx = _relpaths_extra(src_dir, prefix, exts)
+            _ingest_plain(stem, path, file_relpath, relpath_pdf, relpath_docx)
 
     conn.commit()
     total_rows = conn.execute("SELECT COUNT(*) FROM verdicts").fetchone()[0]
     conn.close()
 
     stats = {"rows": rows_inserted, "documents_matched": docs_matched,
-             "documents_found": len(by_ext), "total_rows": total_rows}
+             "documents_found": documents_found, "total_rows": total_rows}
     if verbose:
         verb = "נוספו" if incremental else "נבנה אינדקס:"
         print(f"{verb} {rows_inserted} רשומות חדשות "

@@ -352,7 +352,8 @@ def main() -> int:
         print("תהליך בניית אינדקס אחר כבר רץ ברקע — מדלג על בנייה כאן (ייתפס בהרצה שלו).")
     else:
         print("מעדכן את מסד הנתונים (בניית אינדקס)...")
-        stats = build_index(verbose=True)
+        supreme_dir = ROOT / "documents_supreme"
+        stats = build_index(verbose=True, extra_sources=[(supreme_dir, "supreme/")])
         print(f"בוצע. במאגר כעת {stats['rows']} רשומות "
               f"({stats['documents_matched']} עם טקסט מלא).")
 
