@@ -125,6 +125,22 @@ def _best_doc(exts: dict[str, Path]) -> Path | None:
     return min(exts.items(), key=lambda kv: _EXT_PRIORITY[kv[0]])[1]
 
 
+def _read_best_text(exts: dict) -> tuple[str, Path | None]:
+    """מנסה לחלץ טקסט מהקובץ המועדף (docx בד"כ), ואם זה נכשל (מחזיר ריק)
+    — עובר לנסות את שאר הסיומות הזמינות לפי סדר עדיפות, לפני שמוותרים.
+
+    נמצא בפועל: חלק מארכיון בית המשפט העליון ('HebrewVerdicts') מכיל
+    קבצים עם סיומת .docx שהם בפועל לא OOXML תקין (כנראה .doc ישן ששונה
+    שמו) — python-docx נכשל בשקט ומחזיר טקסט ריק, בעוד ה-PDF המקביל של
+    אותו מסמך תקין לגמרי. בלי הנפילה-חזרה הזו, אלפי מסמכים כאלה היו
+    מדולגים לחלוטין (has_document=0) למרות שיש להם טקסט קריא בפורמט אחר."""
+    for _ext, path in sorted(exts.items(), key=lambda kv: _EXT_PRIORITY[kv[0]]):
+        text = read_text(path)
+        if text:
+            return text, path
+    return "", _best_doc(exts)
+
+
 def _dir_date(path: Path) -> str:
     """מחזיר תאריך ISO משם תיקיית-האב אם הוא **בדיוק** בפורמט YYYY-M-D (תיקיות
     ההורדה היומית של decisions.court.gov.il). fullmatch (לא match) חשוב:
@@ -262,15 +278,13 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             if stem in existing_stems:
                 continue
 
-            doc = _best_doc(by_ext.get(stem, {}))
-            full_text = ""
+            full_text, doc = _read_best_text(by_ext.get(stem, {}))
             judge = ""
             decision_date = ""
             has_doc = 0
             file_relpath = ""
             if doc is not None:
                 file_relpath = doc.relative_to(docs_dir).as_posix()
-                full_text = read_text(doc)
                 if full_text:
                     has_doc = 1
                     docs_matched += 1
@@ -296,16 +310,19 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             if rows_inserted % _COMMIT_EVERY == 0:
                 conn.commit()
 
-    def _ingest_plain(stem: str, path: Path, file_relpath: str,
+    def _ingest_plain(stem: str, base_dir: Path, exts: dict, file_relpath_prefix: str,
                       relpath_pdf: str, relpath_docx: str) -> bool:
         """מחלץ מטא-דאטה מגוף המסמך ומכניס רשומה, עבור קובץ שאינו מכוסה
-        ב-CSV (הורדות יומיות/בית המשפט העליון). מחזיר True אם הוכנס."""
+        ב-CSV (הורדות יומיות/בית המשפט העליון). מחזיר True אם הוכנס.
+
+        מנסה את כל הסיומות הזמינות (לא רק את המועדפת) — ראו _read_best_text."""
         nonlocal rows_inserted, docs_matched
-        full_text = read_text(path)
-        if not full_text:
+        full_text, path = _read_best_text(exts)
+        if not full_text or path is None:
             return False
         md = extract_metadata(full_text)
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
+        file_relpath = file_relpath_prefix + path.relative_to(base_dir).as_posix()
         _insert_verdict(conn, {
             "case_number": md["case_number"], "parties": md["parties"],
             "court": md["court"], "proceeding": "", "case_type": md["case_type"],
@@ -331,10 +348,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             _log(f"  ...נסרקו {_scanned} קבצים במקור הראשי (מתוכם {rows_inserted} חדשים)")
         if stem in covered_stems or stem in existing_stems:
             continue
-        path = _best_doc(exts)
-        file_relpath = path.relative_to(docs_dir).as_posix()
         relpath_pdf, relpath_docx = _relpaths(stem)
-        _ingest_plain(stem, path, file_relpath, relpath_pdf, relpath_docx)
+        _ingest_plain(stem, docs_dir, exts, "", relpath_pdf, relpath_docx)
 
     # ===== מקורות נוספים (בית המשפט העליון וכד') =====
     documents_found = len(by_ext)
@@ -347,10 +362,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                 _log(f"  ...נסרקו {_scanned} קבצים במקור {src_dir} (מתוכם {rows_inserted} חדשים סה\"כ)")
             if stem in covered_stems or stem in existing_stems:
                 continue
-            path = _best_doc(exts)
-            file_relpath = prefix + path.relative_to(src_dir).as_posix()
             relpath_pdf, relpath_docx = _relpaths_extra(src_dir, prefix, exts)
-            _ingest_plain(stem, path, file_relpath, relpath_pdf, relpath_docx)
+            _ingest_plain(stem, src_dir, exts, prefix, relpath_pdf, relpath_docx)
 
     conn.commit()
     total_rows = conn.execute("SELECT COUNT(*) FROM verdicts").fetchone()[0]
