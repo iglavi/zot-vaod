@@ -14,11 +14,35 @@ from __future__ import annotations
 import csv
 import re
 import sqlite3
+import threading
 from pathlib import Path
 
 from . import config
 from .extract import (extract_decision_date, extract_judge, extract_metadata,
                       filed_date_from_case, read_text)
+
+# חלק מהמסמכים (במיוחד PDF פגומים/חריגים) גורמים ל-pdfplumber/pypdf
+# להיתקע בפועל במקום לזרוק שגיאה — מה שהיה תוקע את כל תהליך האינדוקס
+# על קובץ אחד ללא כל הודעה. timeout מוגן-thread (thread חדש לכל קריאה,
+# לא pool משותף — כדי שקובץ תקוע לא יחסום קריאות עתידיות) מבטיח שקובץ
+# בודד לעולם לא יעצור את כל התהליך: ה-thread התקוע ננטש (daemon, לא
+# חוסם את סיום התהליך), אבל התהליך הראשי ממשיך הלאה מיד.
+_READ_TIMEOUT_SEC = 30
+
+
+def _read_text_with_timeout(path: Path) -> str:
+    result: list[str] = []
+
+    def _worker():
+        result.append(read_text(path))
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=_READ_TIMEOUT_SEC)
+    if t.is_alive():
+        print(f"  אזהרה: קריאת {path} לקחה מעל {_READ_TIMEOUT_SEC}s — מדלג (ננטש ברקע).")
+        return ""
+    return result[0] if result else ""
 
 # עדיפות סיומות כשקיימים כמה קבצים לאותו פסק דין (docx נותן טקסט נקי יותר מ-PDF)
 _EXT_PRIORITY = {".docx": 0, ".doc": 1, ".txt": 2, ".pdf": 3}
@@ -135,7 +159,7 @@ def _read_best_text(exts: dict) -> tuple[str, Path | None]:
     אותו מסמך תקין לגמרי. בלי הנפילה-חזרה הזו, אלפי מסמכים כאלה היו
     מדולגים לחלוטין (has_document=0) למרות שיש להם טקסט קריא בפורמט אחר."""
     for _ext, path in sorted(exts.items(), key=lambda kv: _EXT_PRIORITY[kv[0]]):
-        text = read_text(path)
+        text = _read_text_with_timeout(path)
         if text:
             return text, path
     return "", _best_doc(exts)
