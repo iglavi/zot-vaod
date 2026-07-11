@@ -187,21 +187,26 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     conn.executescript(CACHE_SCHEMA)
     summary_cache = dict(conn.execute("SELECT stem, structural_summary FROM ai_summaries").fetchall())
 
+    def _log(msg: str) -> None:
+        if verbose:
+            print(msg, flush=True)
+
     incremental = _schema_matches(conn)
     if incremental:
+        _log("שולף רשימת קבצים כבר-מאונדקסים (existing_stems)...")
         existing_stems = {r[0] for r in conn.execute("SELECT filename FROM verdicts").fetchall()}
-        if verbose:
-            print(f"אינדקס קיים ותואם מבנה — מוסיף רק קבצים חדשים "
-                  f"({len(existing_stems)} כבר מאונדקסים).")
+        _log(f"אינדקס קיים ותואם מבנה — מוסיף רק קבצים חדשים "
+             f"({len(existing_stems)} כבר מאונדקסים).")
     else:
         conn.execute("DROP TABLE IF EXISTS verdicts")
         conn.execute("DROP TABLE IF EXISTS verdicts_fts")
         conn.executescript(SCHEMA)
         existing_stems = set()
-        if verbose:
-            print("אין אינדקס תואם (ראשון, או שמבנה הקוד השתנה) — בונה הכול מחדש.")
+        _log("אין אינדקס תואם (ראשון, או שמבנה הקוד השתנה) — בונה הכול מחדש.")
 
+    _log(f"סורק את תיקיית המקור הראשית ({docs_dir})...")
     by_ext = _index_by_ext(docs_dir)
+    _log(f"נמצאו {len(by_ext)} שמות-קבצים ייחודיים במקור הראשי.")
 
     def _relpaths(stem: str) -> tuple[str, str]:
         exts = by_ext.get(stem, {})
@@ -213,8 +218,12 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     # מקורות נוספים (כמו בית המשפט העליון): stem -> (תיקיית-מקור,
     # תחילית-R2, {סיומת: נתיב}). המקור הראשי מטופל בנפרד למעלה (גם
     # ל-CSV וגם לתאריך-מתיקייה), אז כאן רק המקורות הנוספים.
-    extra_by_source = [(src_dir, prefix, _index_by_ext(src_dir))
-                       for src_dir, prefix in extra_sources]
+    extra_by_source = []
+    for src_dir, prefix in extra_sources:
+        _log(f"סורק מקור נוסף ({src_dir})...")
+        src_map = _index_by_ext(src_dir)
+        _log(f"נמצאו {len(src_map)} שמות-קבצים ייחודיים במקור {src_dir}.")
+        extra_by_source.append((src_dir, prefix, src_map))
 
     def _relpaths_extra(src_dir: Path, prefix: str, exts: dict) -> tuple[str, str]:
         pdf = exts.get(".pdf")
@@ -315,7 +324,11 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
 
     # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
     # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
+    _scanned = 0
     for stem, exts in by_ext.items():
+        _scanned += 1
+        if verbose and _scanned % 20000 == 0:
+            _log(f"  ...נסרקו {_scanned} קבצים במקור הראשי (מתוכם {rows_inserted} חדשים)")
         if stem in covered_stems or stem in existing_stems:
             continue
         path = _best_doc(exts)
@@ -327,7 +340,11 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     documents_found = len(by_ext)
     for src_dir, prefix, src_by_ext in extra_by_source:
         documents_found += len(src_by_ext)
+        _scanned = 0
         for stem, exts in src_by_ext.items():
+            _scanned += 1
+            if verbose and _scanned % 20000 == 0:
+                _log(f"  ...נסרקו {_scanned} קבצים במקור {src_dir} (מתוכם {rows_inserted} חדשים סה\"כ)")
             if stem in covered_stems or stem in existing_stems:
                 continue
             path = _best_doc(exts)
