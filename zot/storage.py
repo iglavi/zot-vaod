@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -124,19 +125,42 @@ def upload_new(verbose: bool = True, docs_dir: Path | None = None,
     return {"configured": True, "uploaded": uploaded, "skipped": skipped, "errors": errors}
 
 
+_UPLOAD_INDEX_RETRIES = 4
+
+
 def upload_index(local_path: Path | None = None, verbose: bool = True) -> dict:
     """מעלה את קובץ האינדקס (index.db) ל-R2 — משם האתר מוריד אותו בהפעלה,
-    במקום דרך git (שחוסם קבצים מעל 100MB)."""
+    במקום דרך git (שחוסם קבצים מעל 100MB).
+
+    מנסה שוב עם המתנה קצרה בין ניסיונות: הקובץ גדול (מעל 1GB) ומועלה
+    לעיתים בדיוק כש-ingest_loop.py כותב אליו (נעילת קובץ זמנית של
+    Windows/SQLite -> PermissionError), וגם הועלה חיבור-נסגר-פתאום בהעלאה
+    מרובת-חלקים גדולה (ConnectionClosedError) — שני אלה חולפים בדרך כלל
+    תוך שניות בודדות, כך שניסיון חוזר קצר פותר את רוב המקרים."""
     client = _client()
     if client is None or not config.R2_BUCKET:
         if verbose:
             print("R2 לא מוגדר — לא ניתן להעלות את האינדקס.")
         return {"configured": False}
     local_path = Path(local_path or config.DB_PATH)
-    client.upload_file(str(local_path), config.R2_BUCKET, INDEX_KEY)
+
+    last_err = None
+    for attempt in range(_UPLOAD_INDEX_RETRIES):
+        try:
+            client.upload_file(str(local_path), config.R2_BUCKET, INDEX_KEY)
+            if verbose:
+                print(f"האינדקס ({local_path.stat().st_size / 1e6:.1f}MB) הועלה ל-R2.")
+            return {"configured": True}
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if verbose:
+                print(f"  ניסיון {attempt + 1}/{_UPLOAD_INDEX_RETRIES} להעלאת "
+                      f"האינדקס נכשל ({e}) — מנסה שוב בעוד {5 * (attempt + 1)}s...")
+            time.sleep(5 * (attempt + 1))
+
     if verbose:
-        print(f"האינדקס ({local_path.stat().st_size / 1e6:.1f}MB) הועלה ל-R2.")
-    return {"configured": True}
+        print(f"העלאת האינדקס נכשלה סופית אחרי {_UPLOAD_INDEX_RETRIES} ניסיונות: {last_err}")
+    return {"configured": True, "error": str(last_err)}
 
 
 def sync_index(local_path: Path | None = None) -> bool:
