@@ -267,7 +267,7 @@ def tab_simple():
     if not ensure_index_ui():
         return
     s = safe_db_call(search.stats)
-    st.caption(f"במאגר: {s['total']:,} החלטות ({s['with_documents']:,} עם טקסט מלא)")
+    st.caption(f"במאגר: {s['with_documents']:,} החלטות")
 
     courts = [""] + safe_db_call(search.distinct_courts)
     proceedings = [""] + safe_db_call(search.distinct_proceedings)
