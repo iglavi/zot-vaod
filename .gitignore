@@ -38,8 +38,9 @@ supreme_failed_slices*.log
 data/.r2_uploaded.txt
 data/.r2_uploaded_supreme.txt
 
-# הגדרות מקומיות של Claude Code (לא חלק מהפרויקט)
-.claude/
+# הגדרות מקומיות של Claude Code (לא חלק מהפרויקט), למעט סוכנים משותפים
+.claude/*
+!.claude/agents/
 
 # פייתון
 __pycache__/
