@@ -45,6 +45,10 @@ R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
 
+# ---- גישת SMTP/IMAP ל-Gmail (App Password) — בוט החיסיון + מייל סיכום יומי ----
+GMAIL_USER = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
 # ---- הגדרות מנוע ה-AI ----
 # ברירת המחדל היא Claude Opus 4.8. אפשר להוזיל עלויות עם claude-sonnet-5.
 AI_MODEL = os.environ.get("ZOT_MODEL", "claude-opus-4-8")

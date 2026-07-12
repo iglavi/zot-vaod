@@ -15,19 +15,36 @@ import csv
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 from . import config
 from .extract import (extract_decision_date, extract_judge, extract_metadata,
                       filed_date_from_case, read_text)
 
-# חלק מהמסמכים (במיוחד PDF פגומים/חריגים) גורמים ל-pdfplumber/pypdf
-# להיתקע בפועל במקום לזרוק שגיאה — מה שהיה תוקע את כל תהליך האינדוקס
-# על קובץ אחד ללא כל הודעה. timeout מוגן-thread (thread חדש לכל קריאה,
-# לא pool משותף — כדי שקובץ תקוע לא יחסום קריאות עתידיות) מבטיח שקובץ
-# בודד לעולם לא יעצור את כל התהליך: ה-thread התקוע ננטש (daemon, לא
-# חוסם את סיום התהליך), אבל התהליך הראשי ממשיך הלאה מיד.
-_READ_TIMEOUT_SEC = 30
+# חלק מהמסמכים (במיוחד PDF פגומים/חריגים, למשל תיקיית PediVerdicts בארכיון
+# העליון) גורמים ל-pdfplumber/pypdf להיתקע בפועל במקום לזרוק שגיאה — מה
+# שהיה תוקע את כל תהליך האינדוקס על קובץ אחד ללא כל הודעה. timeout מוגן-
+# thread (thread חדש לכל קריאה, לא pool משותף — כדי שקובץ תקוע לא יחסום
+# קריאות עתידיות) מבטיח שקובץ בודד לעולם לא יעצור את כל התהליך: ה-thread
+# התקוע ננטש (daemon, לא חוסם את סיום התהליך), אבל התהליך הראשי ממשיך
+# הלאה מיד.
+#
+# נמצא בפועל: מדובר בתופעה לא-נדירה (סדר גודל 5-7% מקובצי בית המשפט
+# העליון) — כנראה PDF מעוותים מבחינה מבנית (לא פשוט "קובץ גדול"; חילוץ
+# טקסט רגיל מ-PDF תקין אמור להיות מהיר גם בקבצים גדולים). 30s לקובץ,
+# כפול אלפי מקרים, הופך לבזבוז מצטבר של ימים שלמים. הורדנו ל-10s: עדיין
+# שוליים נדיבים לחילוץ לגיטימי איטי, אבל חוסך פי-3 מהזמן שמתבזבז על
+# קבצים תקועים בפועל.
+_READ_TIMEOUT_SEC = 10
+
+# תיקיית PediVerdicts (ארכיון כרכי "פסקי דין" המודפסים של העליון) מכילה,
+# לצד קובצי ההחלטות הבודדות, גם קובצי-מנהלה לכל כרך/חלק: דף שער/קולופון
+# (סיומת _P — רשימת שופטים, שר המשפטים וכו') ותוכן עניינים (_T) — לשניהם
+# יש טקסט קריא (has_document=1 היה יוצא נכון) אך הם אינם פסק דין או
+# החלטה כלל, ולכן אסור שיחזרו כתוצאת חיפוש/ספירה. זוהה בפועל: 38 קבצים
+# כאלה סופקו כ'תשובה' לשאלת AI על מספר החלטות העליון במאגר.
+_PEDI_ADMIN_RE = re.compile(r"PediVerdicts[/\\].*S[A-Z]\d_[PT]\.pdf\.pdf$", re.IGNORECASE)
 
 
 def _read_text_with_timeout(path: Path) -> str:
@@ -339,12 +356,23 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         """מחלץ מטא-דאטה מגוף המסמך ומכניס רשומה, עבור קובץ שאינו מכוסה
         ב-CSV (הורדות יומיות/בית המשפט העליון). מחזיר True אם הוכנס.
 
-        מנסה את כל הסיומות הזמינות (לא רק את המועדפת) — ראו _read_best_text."""
+        מנסה את כל הסיומות הזמינות (לא רק את המועדפת) — ראו _read_best_text.
+
+        חשוב: גם כשחילוץ הטקסט נכשל לגמרי (has_document=0) חייבים להכניס
+        שורה (ולא רק לוותר) — אחרת ה-stem לא נכנס ל-existing_stems, וכל
+        ריצה עתידית (כל 10 דקות, ללא הגבלת זמן) תנסה לקרוא את אותו קובץ
+        התקוע מחדש שוב ושוב, לנצח. נמצא בפועל: כמה עשרות קובצי PDF גדולים
+        וכבדים בארכיון העליון (למשל PediVerdicts) גורמים ל-timeout של 30s
+        בכל ניסיון — בלי השורה הזו כל ריצה הייתה מבזבזת דקות ארוכות על
+        אותם קבצים בדיוק בלי שום התקדמות."""
         nonlocal rows_inserted, docs_matched
         full_text, path = _read_best_text(exts)
-        if not full_text or path is None:
+        if path is None:
             return False
-        md = extract_metadata(full_text)
+        md = extract_metadata(full_text) if full_text else {
+            "case_number": "", "parties": "", "court": "", "case_type": "",
+            "decision_type": "", "decision_date": "", "judge": "",
+        }
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
         file_relpath = file_relpath_prefix + path.relative_to(base_dir).as_posix()
         _insert_verdict(conn, {
@@ -354,22 +382,31 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             "filed_date": filed, "decision_date": md["decision_date"],
             "judge": md["judge"], "filename": stem, "file_relpath": file_relpath,
             "file_relpath_pdf": relpath_pdf, "file_relpath_docx": relpath_docx,
-            "has_document": 1, "full_text": full_text,
+            "has_document": 0 if _PEDI_ADMIN_RE.search(file_relpath) else (1 if full_text else 0),
+            "full_text": full_text,
             "structural_summary": summary_cache.get(stem, ""),
         })
         rows_inserted += 1
-        docs_matched += 1
+        if full_text:
+            docs_matched += 1
         if rows_inserted % _COMMIT_EVERY == 0:
             conn.commit()
         return True
 
     # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
     # מחלצים את המטא-דאטה ישירות מגוף פסק הדין ומוסיפים אותם למאגר.
+    # heartbeat מבוסס-זמן (לא רק כל 20000 קבצים) — כדי שהפסקה שקטה בין
+    # checkpoints (למשל תיקייה עם פחות מ-20000 קבצים נותרים) לא תיראה
+    # כתקיעה כשבודקים את הלוג; מדפיס גם את השם הנוכחי לצורך אבחון.
+    _HEARTBEAT_SEC = 60
     _scanned = 0
+    _last_heartbeat = time.monotonic()
     for stem, exts in by_ext.items():
         _scanned += 1
-        if verbose and _scanned % 20000 == 0:
-            _log(f"  ...נסרקו {_scanned} קבצים במקור הראשי (מתוכם {rows_inserted} חדשים)")
+        _now = time.monotonic()
+        if verbose and (_scanned % 20000 == 0 or _now - _last_heartbeat >= _HEARTBEAT_SEC):
+            _log(f"  ...נסרקו {_scanned} קבצים במקור הראשי (מתוכם {rows_inserted} חדשים) — נוכחי: {stem}")
+            _last_heartbeat = _now
         if stem in covered_stems or stem in existing_stems:
             continue
         relpath_pdf, relpath_docx = _relpaths(stem)
@@ -380,10 +417,13 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     for src_dir, prefix, src_by_ext in extra_by_source:
         documents_found += len(src_by_ext)
         _scanned = 0
+        _last_heartbeat = time.monotonic()
         for stem, exts in src_by_ext.items():
             _scanned += 1
-            if verbose and _scanned % 20000 == 0:
-                _log(f"  ...נסרקו {_scanned} קבצים במקור {src_dir} (מתוכם {rows_inserted} חדשים סה\"כ)")
+            _now = time.monotonic()
+            if verbose and (_scanned % 20000 == 0 or _now - _last_heartbeat >= _HEARTBEAT_SEC):
+                _log(f"  ...נסרקו {_scanned} קבצים במקור {src_dir} (מתוכם {rows_inserted} חדשים סה\"כ) — נוכחי: {stem}")
+                _last_heartbeat = _now
             if stem in covered_stems or stem in existing_stems:
                 continue
             relpath_pdf, relpath_docx = _relpaths_extra(src_dir, prefix, exts)
@@ -404,4 +444,10 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
 
 
 if __name__ == "__main__":
-    build()
+    # חובה להעביר extra_sources גם כאן: בלעדיו, הרצה ישירה של המודול
+    # (כפי שמתועד למעלה: "python -m zot.ingest") מדלגת בשקט על כל ארכיון
+    # בית המשפט העליון — נתגלה בפועל אחרי שקריאה כזו לא הוסיפה קבצי עליון
+    # שהורדו זה עתה, בניגוד ל-ingest_loop.py ו-fetch_daily.py ששני אלה
+    # כן מעבירים את הפרמטר.
+    SUPREME_DOCS_DIR = Path(__file__).resolve().parent.parent / "documents_supreme"
+    build(extra_sources=[(SUPREME_DOCS_DIR, "supreme/")])

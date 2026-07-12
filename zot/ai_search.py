@@ -20,7 +20,14 @@ _SYSTEM_ANSWER = (
     "בכל קביעה הפנה למספר התיק הרלוונטי (למשל: 'ראו ת\"א 4934-07-24'), "
     "וציין את בית המשפט והשופט/ת כשהדבר רלוונטי. "
     "אם התשובה אינה מצויה בפסקי הדין שסופקו — אמור זאת במפורש ואל תמציא מידע. "
-    "סכם בסוף אילו תיקים שימשו למענה."
+    "סכם בסוף אילו תיקים שימשו למענה.\n\n"
+    "חשוב לגבי שאלות 'כמה'/סטטיסטיקה: פסקי הדין המובאים לך למטה הם "
+    "*מדגם* בלבד (עד כמה מסמכים בודדים, הרלוונטיים ביותר) — לעולם אל "
+    "תסיק את המספר הכולל של פסקי דין במאגר ממספר המסמכים שהוצגו לך. "
+    "אם צוין לך 'מספר תוצאות כולל' מפורש — זהו המספר האמיתי (ספירה "
+    "ישירה במסד הנתונים) וזה המספר שיש לצטט; אם לא צוין מספר כזה, "
+    "אמור במפורש שאין לך יכולת לספור בוודאות את כלל המאגר ושהמענה "
+    "מבוסס רק על המסמכים הרלוונטיים ביותר שנמצאו."
 )
 
 _ANALYZE_SCHEMA = {
@@ -37,8 +44,16 @@ _ANALYZE_SCHEMA = {
         "judge": {"type": "string", "description": "שם שופט/ת אם הוזכר, אחרת ריק."},
         "date_from": {"type": "string", "description": "תאריך התחלה בפורמט YYYY-MM-DD, או ריק."},
         "date_to": {"type": "string", "description": "תאריך סיום בפורמט YYYY-MM-DD, או ריק."},
+        "court_scope": {
+            "type": "string", "enum": ["", "supreme", "general"],
+            "description": (
+                "'supreme' אם השאלה מתייחסת ספציפית לבית המשפט העליון "
+                "(או בג\"ץ), 'general' אם היא מתייחסת לבתי משפט אחרים "
+                "בלבד (שלום/מחוזי/עבודה וכו', לא העליון), אחרת ריק."
+            ),
+        },
     },
-    "required": ["search_terms", "parties", "judge", "date_from", "date_to"],
+    "required": ["search_terms", "parties", "judge", "date_from", "date_to", "court_scope"],
     "additionalProperties": False,
 }
 
@@ -74,7 +89,9 @@ def analyze_query(client, question: str, today: str | None = None) -> dict:
         "להלן שאלה של משתמש על פסקי דין של בתי המשפט בישראל. "
         "חלץ ממנה מילות חיפוש בעברית לאיתור פסקי הדין הרלוונטיים, "
         "וכן טווח תאריכים אם השאלה מתייחסת לזמן (לדוגמה: 'בשנה האחרונה', "
-        "'בחודש שעבר') — המר אותו לתאריכי YYYY-MM-DD יחסית להיום.\n\n"
+        "'בחודש שעבר') — המר אותו לתאריכי YYYY-MM-DD יחסית להיום. "
+        "ציין גם court_scope אם השאלה מתייחסת ספציפית לבית המשפט העליון "
+        "(כולל בג\"ץ) או ספציפית לבתי משפט אחרים (לא העליון).\n\n"
         f"השאלה: {question}"
     )
     try:
@@ -89,27 +106,37 @@ def analyze_query(client, question: str, today: str | None = None) -> dict:
     except Exception:
         # גיבוי: משתמשים בשאלה עצמה כמילות חיפוש
         data = {"search_terms": [question], "parties": [], "judge": "",
-                "date_from": "", "date_to": ""}
+                "date_from": "", "date_to": "", "court_scope": ""}
     data.setdefault("search_terms", [])
     data.setdefault("parties", [])
     data.setdefault("judge", "")
     data.setdefault("date_from", "")
     data.setdefault("date_to", "")
+    data.setdefault("court_scope", "")
     return data
 
 
 def retrieve(analysis: dict):
-    """שלב 2א: אחזור פסקי הדין הרלוונטיים לפי הניתוח."""
+    """שלב 2א: אחזור פסקי הדין הרלוונטיים לפי הניתוח, בצירוף ספירה מדויקת
+    (לא רק top-K) של כלל התוצאות התואמות — כדי שהתשובה לשאלות 'כמה' תוכל
+    להתבסס על מספר אמיתי מהמסד, ולא על גודל המדגם שהוצג למודל.
+
+    מחזיר (verdicts, total_count)."""
     all_terms = list(analysis.get("search_terms", [])) + list(analysis.get("parties", []))
     if analysis.get("judge"):
         all_terms.append(analysis["judge"])
     fts = _fts_from_terms(all_terms)
-    return search.retrieve_for_ai(
-        fts_query=fts,
-        date_from=analysis.get("date_from", ""),
-        date_to=analysis.get("date_to", ""),
+    court_scope = analysis.get("court_scope", "")
+    date_from = analysis.get("date_from", "")
+    date_to = analysis.get("date_to", "")
+    verdicts = search.retrieve_for_ai(
+        fts_query=fts, court_scope=court_scope, date_from=date_from, date_to=date_to,
         limit=config.AI_MAX_DOCS,
     )
+    total_count = search.count_verdicts(
+        court_scope=court_scope, fts_query=fts, date_from=date_from, date_to=date_to,
+    )
+    return verdicts, total_count
 
 
 def _build_context(verdicts) -> str:
@@ -128,16 +155,32 @@ def _build_context(verdicts) -> str:
     return "\n\n".join(blocks)
 
 
-def answer_stream(client, question: str, verdicts, history: list[dict] | None = None):
+_SCOPE_LABEL = {
+    "supreme": "עבור בית המשפט העליון בלבד (סינון ודאי לפי ארכיון המקור, לא ניחוש)",
+    "general": "עבור בתי משפט שאינם בית המשפט העליון",
+    "": "התואם את מילות החיפוש (ללא סינון לפי ערכאה)",
+}
+
+
+def answer_stream(client, question: str, verdicts, total_count: int = 0,
+                  court_scope: str = "", history: list[dict] | None = None):
     """שלב 2ב: מחזיר גנרטור של קטעי טקסט (streaming) עם התשובה המנומקת.
+
+    total_count/court_scope: מספר התוצאות הכולל במאגר עבור החיפוש הנוכחי
+    (ספירה ישירה, לא top-K) והיקפו — מועברים למודל כעובדה נפרדת מהמסמכים
+    המוצגים, כדי שיוכל לענות נכון על שאלות 'כמה' (ראו _SYSTEM_ANSWER).
 
     history מאפשר שיחת המשך: רשימת תורות קודמות ({"role": "user"/"assistant",
     "content": טקסט}) בלי הקשר פסקי-הדין המלא של תורות קודמות (רק השאלה
     והתשובה) — כדי לשמור את ההיסטוריה קומפקטית וזולה, תוך שהמודל עדיין
     "זוכר" את מהלך השיחה."""
     context = _build_context(verdicts)
+    scope_label = _SCOPE_LABEL.get(court_scope, _SCOPE_LABEL[""])
     user_content = (
-        f"פסקי הדין הרלוונטיים לשאלה הנוכחית:\n\n{context}\n\n"
+        f"מספר התוצאות הכולל במאגר {scope_label} (ספירה מדויקת, לא רק "
+        f"המסמכים המוצגים למטה): {total_count}\n\n"
+        f"פסקי הדין הרלוונטיים ביותר (מדגם, עד {config.AI_MAX_DOCS} מסמכים):\n\n"
+        f"{context}\n\n"
         f"===\n\nהשאלה: {question}\n\n"
         "ענה על השאלה על סמך פסקי הדין שלמעלה (ובהתחשב בהקשר השיחה הקודמת, "
         "אם רלוונטי), עם הפניות למספרי התיקים."

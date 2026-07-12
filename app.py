@@ -100,6 +100,11 @@ hr{border-color:var(--blush) !important; opacity:.5;}
 .hint{background:var(--warm-white); border:1.5px dashed var(--dusty-rose);
   border-radius:10px; padding:1rem 1.2rem; color:var(--bark); font-size:.9rem;}
 [data-testid="stChatMessage"]{direction:rtl;}
+/* חשוב: הכלל הגורף לעיל (html,body,.stApp,*{font-family:Rubik !important})
+   דורס גם את גופן האייקונים הפנימי של Streamlit (Material Symbols Rounded),
+   מה שגורם לחיצי ה-expander (למשל 'הצג את פסק הדין המלא') להיראות כטקסט
+   גולמי 'keyboard_arrow_right' במקום כחץ. משחזרים את גופן האייקון במפורש. */
+[data-testid="stIconMaterial"]{font-family:'Material Symbols Rounded' !important;}
 .about-box{background:var(--warm-white); border-radius:12px; border:1.5px solid var(--blush);
   padding:1.2rem 1.5rem; direction:rtl; line-height:1.8; color:var(--charcoal); margin-bottom:1rem;}
 .about-box h4{color:var(--bark); margin-top:0;}
@@ -391,7 +396,7 @@ def tab_ai():
     with st.chat_message("assistant", avatar="⚖️"):
         with st.spinner("מנתח את השאלה ומאתר פסקי דין רלוונטיים..."):
             analysis = ai_search.analyze_query(client, question, today=date.today().isoformat())
-            verdicts = safe_db_call(ai_search.retrieve, analysis)
+            verdicts, total_count = safe_db_call(ai_search.retrieve, analysis)
 
         if not verdicts:
             msg = "לא נמצאו פסקי דין רלוונטיים לשאלה זו במאגר."
@@ -409,7 +414,10 @@ def tab_ai():
         answer_box = st.empty()
         collected = []
         try:
-            for chunk in ai_search.answer_stream(client, question, verdicts, history=history):
+            for chunk in ai_search.answer_stream(client, question, verdicts,
+                                                 total_count=total_count,
+                                                 court_scope=analysis.get("court_scope", ""),
+                                                 history=history):
                 collected.append(chunk)
                 answer_box.markdown("".join(collected) + "▌")
             answer_box.markdown("".join(collected))

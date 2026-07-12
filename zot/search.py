@@ -213,15 +213,23 @@ def stats(db_path: Path | None = None) -> dict:
     return {"total": total, "with_documents": with_docs}
 
 
-def retrieve_for_ai(*, fts_query: str = "", date_from: str = "", date_to: str = "",
+def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
+                    date_from: str = "", date_to: str = "",
                     limit: int = config.AI_MAX_DOCS,
                     db_path: Path | None = None) -> list[sqlite3.Row]:
-    """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים.
+    """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים
+    ו-court_scope (לפי נתיב קובץ ודאי, ראו _SUPREME_PATH_COND — לא לפי שדה
+    court הטקסטואלי, שעשוי להיות ריק).
 
     מחזיר רק פסקי דין שיש להם טקסט מלא (has_document=1)."""
     conn = get_conn(db_path)
     where = ["v.has_document = 1"]
     params: list = []
+
+    if court_scope == "supreme":
+        where.append(_SUPREME_PATH_COND)
+    elif court_scope == "general":
+        where.append("NOT " + _SUPREME_PATH_COND)
 
     if date_from:
         where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) >= ?")
@@ -262,3 +270,50 @@ def retrieve_for_ai(*, fts_query: str = "", date_from: str = "", date_to: str = 
         if len(unique) >= limit:
             break
     return unique
+
+
+# תיוג ודאי של 'ארכיון העליון' לפי נתיב הקובץ (supreme/...), לא לפי שדה
+# court הטקסטואלי — כי court עשוי להישאר ריק גם עבור פסקי דין של העליון
+# (חילוץ מטא-דאטה best-effort שלא תמיד מוצא כותרת), בעוד שנתיב הקובץ
+# נקבע ודאית בזמן ה-ingest (ראו zot/ingest.py: extra_sources=[(...,'supreme/')]).
+_SUPREME_PATH_COND = (
+    "(file_relpath LIKE 'supreme/%' OR file_relpath_pdf LIKE 'supreme/%' "
+    "OR file_relpath_docx LIKE 'supreme/%')"
+)
+
+
+def count_verdicts(*, court_scope: str = "", fts_query: str = "",
+                    date_from: str = "", date_to: str = "",
+                    db_path: Path | None = None) -> int:
+    """סופר במדויק (COUNT, לא מוגבל ל-top-K) כמה פסקי דין תואמים — עבור
+    מנוע ה-AI, כדי שיוכל לענות על שאלות 'כמה' בלי לבלבל בין מדגם המסמכים
+    שהוצג לו לבין המספר האמיתי במאגר. court_scope: 'supreme' (בית המשפט
+    העליון, לפי נתיב קובץ) / 'general' (שאר בתי המשפט) / '' (הכול)."""
+    conn = get_conn(db_path)
+    where = ["v.has_document = 1"]
+    params: list = []
+
+    if court_scope == "supreme":
+        where.append(_SUPREME_PATH_COND)
+    elif court_scope == "general":
+        where.append("NOT " + _SUPREME_PATH_COND)
+
+    if date_from:
+        where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) <= ?")
+        params.append(date_to)
+
+    if fts_query:
+        sql = (
+            "SELECT COUNT(*) FROM verdicts_fts f JOIN verdicts v ON v.id = f.rowid "
+            "WHERE f.verdicts_fts MATCH ? AND " + " AND ".join(where)
+        )
+        n = conn.execute(sql, [fts_query] + params).fetchone()[0]
+    else:
+        sql = "SELECT COUNT(*) FROM verdicts v WHERE " + " AND ".join(where)
+        n = conn.execute(sql, params).fetchone()[0]
+
+    conn.close()
+    return n

@@ -12,8 +12,14 @@ from .config import HEB_MONTHS
 
 _MONTHS_ALT = "|".join(HEB_MONTHS)
 
-# "לפני כב' השופטת רוני סלע" / "לפני כבוד הרשם ..." וכד'
-_JUDGE_RE = re.compile(r"לפנ[יי]\s+כב(?:ו?ד|['׳])?\s*(.{0,70})")
+# "לפני כב' השופטת רוני סלע" / "לפני כבוד הרשם ..." וכד' — חלק מהמסמכים
+# (כ-2,200 בפועל) משתמשים ב'בפני' במקום 'לפני'; בלעדיו judge יצא ריק
+# לכולם. גם ':' אחרי לפני/בפני ('בפני: כבוד...') חייב להיות אופציונלי —
+# אחרת ה-search מדלג על השורה הנכונה (הראשונה, עם השם) ותופס בטעות אזכור
+# כללי מאוחר יותר בגוף ההחלטה (למשל 'יובא לפני כבוד הרשם' בלי שם). גם
+# ספרה בודדת שנדבקת ל'לפני/בפני' (כ-176 מסמכים בפועל, כנראה שריד של
+# הערת-שוליים/מספר עמוד שנשרך אל תוך זרימת הטקסט) חייבת להיות אופציונלית.
+_JUDGE_RE = re.compile(r"[לב]פנ[יי]\s*\d*\s*:?\s*כב(?:ו?ד|['׳])?\s*(.{0,70})")
 # תבנית תאריך לועזי בתוך גוף פסק הדין: "01 ינואר 2026"
 _DATE_RE = re.compile(r"(\d{1,2})\s+(" + _MONTHS_ALT + r")\s+(\d{4})")
 # מילים שמסמנות את סוף שם השופט/ת (תארים, תפקידי צדדים, מונחי פתיח)
@@ -68,6 +74,26 @@ def read_text(path: str | Path) -> str:
         return ""
 
 
+# PDF-ים עבריים ישנים (בעיקר טפסי בתי-משפט מלפני ~2015) נוצרו בפונטים
+# 'ויזואליים' שאינם תומכים ב-BiDi תקני — pdfplumber/pypdf מחלצים מהם את
+# התווים לפי סדר הציור על הדף (משמאל לימין), כך שכל שורה עברית יוצאת
+# הפוכה לגמרי. מזהים את התופעה לפי מילת-מפתח נפוצה שמופיעה הפוכה (ולא
+# במצורה הרגילה) בטקסט שחולץ, ומתקנים עם python-bidi (base_dir='R'
+# משמר נכון גם רצפי מספרים/אנגלית מוטמעים, בניגוד להיפוך שורה גולמי).
+_REVERSED_SIGNATURE = "טפשמה תיב"  # 'בית המשפט' הפוך
+_NORMAL_SIGNATURE = "בית המשפט"
+
+
+def _fix_visual_hebrew(text: str) -> str:
+    if not text or _REVERSED_SIGNATURE not in text or _NORMAL_SIGNATURE in text:
+        return text
+    try:
+        from bidi.algorithm import get_display
+    except ImportError:
+        return text
+    return "\n".join(get_display(line, base_dir="R") for line in text.split("\n"))
+
+
 def _read_pdf(p: Path) -> str:
     """מחלץ טקסט מקובץ PDF. מנסה pdfplumber (טוב יותר לעברית) ואז pypdf."""
     try:
@@ -77,14 +103,15 @@ def _read_pdf(p: Path) -> str:
             pages = [(page.extract_text() or "") for page in pdf.pages]
         text = "\n".join(pages).strip()
         if text:
-            return text
+            return _fix_visual_hebrew(text)
     except Exception:
         pass
     try:
         from pypdf import PdfReader
 
         reader = PdfReader(str(p))
-        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        return _fix_visual_hebrew(text)
     except Exception:
         return ""
 
@@ -123,7 +150,12 @@ _HEAD_RE = re.compile(
     r"(?P<ctype>[֐-׿\"״]{2,6})\s+"
     r"(?P<num>\d{2,6}[-/]\d{1,2}(?:-\d{2,4})?)"
 )
-_PARTIES_STOP = re.compile(r"לפנ[יי]|תיק\s+חיצוני|כב(?:ו?ד|['׳])")
+# סימני-עצירה אמינים תמיד (פותחים בפועל את שורת השופט/ת או 'תיק חיצוני').
+_PARTIES_STOP = re.compile(r"[לב]פנ[יי]|תיק\s+חיצוני")
+# 'כבוד'/"כב'" כשלעצמו הוא סימון-עצירה חלש יותר: ארגונים בשם 'דרך כבוד'
+# וכד' הכילו את המילה בשם הצד עצמו, וגרמו לקטיעה שגויה של השם. משמש רק
+# כגיבוי אם לא נמצא 'לפני/בפני' תקין באותה שורה כלל.
+_PARTIES_STOP_FALLBACK = re.compile(r"כב(?:ו?ד|['׳])")
 
 # התאמה נחשבת כותרת אמיתית רק אם נמצאה קרוב לתחילת המסמך. אחרת, כנראה
 # שההתאמה מקרית (איזשהו מספר בטקסט הגוף, לא מספר התיק בפועל) — וניפול
@@ -135,6 +167,122 @@ _HEAD_MAX_POS = 150
 # הזיהוי הזה, _HEAD_RE היה מוצא התאמה מקרית מאוחר יותר בטקסט ומזהם את
 # כל השדות (כולל 'בית משפט') בגוש טקסט לא רלוונטי.
 _BAKASHA_RE = re.compile(r"^מספר\s+בקשה\s*:?\s*\d+")
+
+# כמעט כל סוג הליך אמיתי כולל מרכאות (ת"א, בג"ץ, חדל"פ...) — בלעדי
+# הדרישה הזו, ה-ctype (2-6 תווים עבריים חופשי) תפס במקרה כל מילה קצרה
+# שמופיעה במקרה ממש לפני תבנית 'מספר/מספר' כלשהי (תאריך בגוף ההחלטה,
+# לרוב) — 'ליום'/'מיום'/'ביום' (תאריך), 'אזרחי'/'פלילי' (תיאור הליך),
+# ואף שברי טקסט הפוך שלא תוקנו. זוהה בפועל שהתבנית הבלתי-מוגבלת יצרה
+# עשרות ערכי-זבל שונים ב-case_type ובגררה אחריה גם court/case_number
+# שגויים (כל הטקסט שלפני ה'התאמה' המקרית).
+def _valid_ctype(ctype: str) -> bool:
+    return ctype == "העליון" or bool(re.search(r"[\"'׳״]", ctype))
+
+
+def _find_head_match(head: str):
+    for m in _HEAD_RE.finditer(head):
+        if m.start() > _HEAD_MAX_POS:
+            return None
+        if _valid_ctype(m.group("ctype")):
+            return m
+    return None
+
+
+_COURT_START_RE = re.compile(r"בית\s*[-–]?\s*ה?משפט|ה?משפט\s+העליון|בג[\"'׳״]?ץ")
+_SUPREME_START_RE = re.compile(r"^(בית\s*[-–]?\s*)?ה?משפט\s+העליון")
+_BAGATZ_RE = re.compile(r"בג[\"'׳״]?ץ")
+# שורות-זבל נפוצות שאינן שם בית משפט כלל (שם שופט/ת שנגרר, כותרות מסמך
+# כלליות) — כשלא זוהתה תבנית 'בית משפט' תקינה, אלה היחידות שחוסמות את
+# הערך המקורי; כל דבר אחר (למשל 'אזורי לעבודה חיפה', 'המחוזי ירושלים' —
+# שמות מקוצרים של סוגי בתי דין/משפט שלא כוללים את המילה 'משפט' עצמה)
+# נשמר כפי שהוא, כדי לא לאבד ערכי סינון תקינים-אך-חלקיים.
+_JUNK_COURT_RE = re.compile(
+    r"^(לפני|בפני)\b|^(תוכן עניינים|תאריך|תקציר|תמצית|מספר|המערער(ת)?|"
+    r"תיקים מאוחדים|הודעה לתקשורת)\b"
+)
+# 'מחוזי חיפה' ו'בית המשפט המחוזי בחיפה' (וכנ"ל 'שלום X'/'בית משפט השלום
+# בX') הם אותו בית משפט בדיוק — הצורה הקצרה מגיעה מ-CSV המקור (החלטות
+# בית המשפט, לא ארכיון העליון) שמקצר לא-עקבית, ובלי איחוד הן נספרות
+# ומוצגות כשני בתי משפט שונים במסנן.
+_SHORT_COURT_RE = re.compile(r"^ה?(מחוזי|שלום)\s+(.+)$")
+_SHORT_COURT_PREFIX = {"מחוזי": "בית המשפט המחוזי ב", "שלום": "בית משפט השלום ב"}
+# 'בית משפט לתעבורה' הוא בית משפט נפרד, לא תת-מסלול של בית משפט השלום —
+# חלק מהמסמכים כותבים בטעות 'בית משפט השלום לתעבורה', מה שיוצר גם כפילות
+# מול הצורה הנכונה ('בית המשפט לתעבורה מחוז X').
+_SHALOM_TRAFFIC_RE = re.compile(r"(בית\s*[-–]?\s*ה?משפט)\s+השלום(\s+לתעבורה)")
+# שרידים שהחילוץ המקורי (_HEAD_RE, שרירת מספר-תיק גזלה את 'העליון' לתוך
+# case_type — ראו extract_metadata) או טעות הקלדה בודדת במסמך המקור
+# משאירים מאחור — בהקשר הזה חד-משמעית בית המשפט העליון (אין בית משפט
+# ישראלי אחר בשם 'העליון' סתם, וזו טעות דפוס ברורה של 'בית המשפט העליון').
+_SUPREME_EXACT_ALIASES = {"העליון", "בית המשפ העליון", "בבית המשפ העליון"}
+# 'בית המשפט קמא' הוא ביטוי-הפניה גנרי לערכאה קודמת בהליך ערעור ('הערכאה
+# הראשונה/הקודמת') — לא שם בית משפט ספציפי, ולעיתים נגרר אחריו טקסט
+# ההפניה המלא (שם שופט/מספר תיק של הערכאה ההיא). לא ניתן לדעת מכך איזה
+# בית משפט זה בפועל.
+_KAMA_RE = re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+קמא\b")
+# תווי סוגריים שנשמרו הפוכים-כיוון (RTL) בחילוץ מ-PDF ('...)בת-ים(' במקום
+# '(בת-ים)') — הכיוון הלוגי לא ידוע, אז פשוט מסירים את כל תווי הסוגריים
+# ולא מנסים לשחזר איזה מהם פותח/סוגר.
+_BRACKETS_RE = re.compile(r"[()\[\]{}]")
+
+
+def _normalize_court(raw: str) -> str:
+    """מנקה ומאחד את שם בית המשפט שחולץ מכותרת המסמך.
+
+    מטפל בשלוש תקלות שנצפו בפועל בשדה הזה: (1) טקסט הפוך מ-PDF ישן —
+    כמו ב-full_text (ראו _fix_visual_hebrew), רק שכאן המחרוזת קצרה מדי
+    כדי שסימן ההיכר של _fix_visual_hebrew תמיד יופיע בה, ולכן הבדיקה
+    כאן מסתמכת על היעדר 'משפט' בכיוון תקין; (2) תווי-זבל שנגררו לפני שם
+    בית המשפט (סימני פיסוק, מספרי עמוד, שארית פסקה קודמת) — נחתכים על
+    ידי איתור נקודת ההתחלה האמיתית של השם; (3) עשרות גרסאות שונות של
+    'בית המשפט העליון' (עם/בלי 'בירושלים', 'תקציר', 'הודעה לתקשורת'
+    וכו') שהופכות מסנן בית-משפט באתר לרשימה ארוכה ומבלבלת — לכל אלה יש
+    רק בית משפט עליון אחד במדינה, ולכן מאוחדות לערך קנוני יחיד.
+    מחזיר מחרוזת ריקה אם לא זוהה שם בית משפט תקין בכלל."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if s in _SUPREME_EXACT_ALIASES:
+        return "בית המשפט העליון"
+    if "משפט" not in s and not _BAGATZ_RE.search(s):
+        try:
+            from bidi.algorithm import get_display
+            fixed = get_display(s, base_dir="R")
+        except ImportError:
+            fixed = s
+        if "משפט" in fixed or _BAGATZ_RE.search(fixed):
+            s = fixed
+    m_short = _SHORT_COURT_RE.match(s)
+    if m_short:
+        kind, city = m_short.groups()
+        if kind == "מחוזי" and city == "מרכז":
+            # יוצא-דופן: שם המחוז ('מרכז') אינו שם עיר שמקבל 'ב' — הכינוי
+            # המלא הנהוג הוא 'מחוז מרכז (לוד)', לא 'ב-מרכז'.
+            s = "בית המשפט המחוזי מרכז לוד"
+        else:
+            s = _SHORT_COURT_PREFIX[kind] + city
+    # לוקחים את ההתאמה האחרונה, לא הראשונה: לפעמים קודמת לכותרת האמיתית
+    # שורת-הקדמה שמזכירה בית משפט אחר בהקשר שונה לגמרי (למשל הודעת איסור
+    # פרסום 'לפי החלטת בית משפט מחוזי' לפני הכותרת האמיתית 'בבית המשפט
+    # העליון') — ההתאמה הקרובה ביותר למספר התיק היא כמעט תמיד הנכונה.
+    matches = list(_COURT_START_RE.finditer(s))
+    if matches:
+        s = s[matches[-1].start():]
+        if _SUPREME_START_RE.match(s):
+            return "בית המשפט העליון"
+    elif _JUNK_COURT_RE.search(s) or len(s) > 40 or re.search(r"\d", s):
+        return ""
+    s = _SHALOM_TRAFFIC_RE.sub(r"\1\2", s)
+    s = _BRACKETS_RE.sub("", s)
+    s = re.sub(r"\s*[-–]\s*", " ", s)
+    s = re.sub(r"\s+בהליך\s*$", "", s)
+    s = re.sub(r"\s+", " ", s).strip(" '\"׳״;:.,]})|+")
+    if s in ("בית המשפט", "בית משפט") or _KAMA_RE.match(s):
+        # 'בית המשפט' לבדו (בלי שם/עיר/סוג), או 'בית משפט קמא' (הפניה
+        # גנרית לערכאה קודמת, לא שם ספציפי) — אי אפשר לדעת מהם איזה בית
+        # משפט זה בפועל.
+        return ""
+    return s if len(s) <= 40 and not re.search(r"\d", s) else ""
 
 
 def extract_metadata(text: str) -> dict:
@@ -148,17 +296,27 @@ def extract_metadata(text: str) -> dict:
         return out
     head = re.sub(r"\s+", " ", text.strip())[:600]
 
-    m = None if _BAKASHA_RE.match(head) else _HEAD_RE.search(head)
-    if m and m.start() <= _HEAD_MAX_POS:
-        court = head[:m.start()].strip(" -–:")
-        court = re.sub(r"^בבית", "בית", court)
-        # עדיין מסננים שאריות זבל: שם בית משפט אמיתי קצר ולא מכיל ספרות
-        if court and len(court) <= 40 and not re.search(r"\d", court):
-            out["court"] = court
-        out["case_type"] = m.group("ctype").strip()
+    m = None if _BAKASHA_RE.match(head) else _find_head_match(head)
+    if m:
+        ctype = m.group("ctype").strip()
+        # 'העליון' הוא היוצא-מן-הכלל היחיד שכשיר כ-ctype בלי מרכאות (ראו
+        # _valid_ctype) — כשהוא מופיע ממש לפני מספר תיק (כותרות רשם/משפט
+        # ביניים מסוג 'בבית המשפט העליון 8382/07') זה חלק משם בית המשפט,
+        # לא סוג ההליך, ולכן מצטרף לקטע ה-court במקום להיחשב ctype.
+        if ctype == "העליון":
+            court = head[:m.end("ctype")].strip(" -–:")
+            ctype = ""
+        else:
+            court = head[:m.start()].strip(" -–:")
+        out["court"] = _normalize_court(court)
+        out["case_type"] = ctype
         out["case_number"] = m.group("num").strip()
         rest = head[m.end():]
-        stop = _PARTIES_STOP.search(rest)
+        # תיקים מאוחדים/צמודים חושפים מספר-תיק שני (לפעמים גם שלישי) לפני
+        # השורה עם 'לפני/בפני' — בלי לזהות אותו כסימן-עצירה נוסף, הוא היה
+        # נגרר לתוך parties (או, אם ארוך מדי, גורם לדחיית השדה כולו).
+        candidates = [s for s in (_PARTIES_STOP.search(rest), _find_head_match(rest)) if s]
+        stop = min(candidates, key=lambda s: s.start()) if candidates else _PARTIES_STOP_FALLBACK.search(rest)
         parties = (rest[:stop.start()] if stop else rest).strip(" -–:‏‎")
         # מסננים "תיק חיצוני: 123/2025" אם נגרר
         parties = re.sub(r"תיק\s+חיצוני.*$", "", parties).strip(" -–:")

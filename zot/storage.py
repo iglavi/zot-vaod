@@ -128,15 +128,35 @@ def upload_new(verbose: bool = True, docs_dir: Path | None = None,
 _UPLOAD_INDEX_RETRIES = 4
 
 
+def _snapshot_db(local_path: Path) -> Path:
+    """יוצר עותק עקבי של index.db דרך ה-backup API של sqlite3, גם אם תהליך
+    אחר כותב אליו באותו הרגע. בניגוד להעתקת קובץ גולמית (shutil/open) —
+    שיכולה להיתקע עם PermissionError לזמן ממושך אם תהליך אחר מחזיק
+    טרנזקציית כתיבה פתוחה — ה-backup API הוא המנגנון הרשמי של SQLite
+    בדיוק בשביל זה, ומחזיר עותק תקין תמיד. index.db עצמו רץ במצב WAL,
+    שמאפשר קריאה מקבילה לכתיבה, אבל העתקה גולמית של הקובץ הראשי בלי
+    ה-WAL עדיין לא בטוחה — לכן עדיף backup API על פני shutil.copy2."""
+    import sqlite3
+
+    tmp = local_path.with_name(local_path.stem + "_upload_snapshot" + local_path.suffix)
+    src = sqlite3.connect(f"file:{local_path.as_posix()}?mode=ro", uri=True, timeout=30)
+    dst = sqlite3.connect(str(tmp))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return tmp
+
+
 def upload_index(local_path: Path | None = None, verbose: bool = True) -> dict:
     """מעלה את קובץ האינדקס (index.db) ל-R2 — משם האתר מוריד אותו בהפעלה,
     במקום דרך git (שחוסם קבצים מעל 100MB).
 
-    מנסה שוב עם המתנה קצרה בין ניסיונות: הקובץ גדול (מעל 1GB) ומועלה
-    לעיתים בדיוק כש-ingest_loop.py כותב אליו (נעילת קובץ זמנית של
-    Windows/SQLite -> PermissionError), וגם הועלה חיבור-נסגר-פתאום בהעלאה
-    מרובת-חלקים גדולה (ConnectionClosedError) — שני אלה חולפים בדרך כלל
-    תוך שניות בודדות, כך שניסיון חוזר קצר פותר את רוב המקרים."""
+    לפני ההעלאה יוצר עותק עקבי מקומי (ראו _snapshot_db) ומעלה אותו במקום
+    הקובץ החי — כך שאין תלות בכך שאף תהליך אחר לא כותב לאינדקס בדיוק
+    באותו רגע. מנסה שוב עם המתנה קצרה בין ניסיונות ההעלאה עצמה, למקרה של
+    כשל רשת חולף (ConnectionClosedError וכדומה)."""
     client = _client()
     if client is None or not config.R2_BUCKET:
         if verbose:
@@ -144,23 +164,36 @@ def upload_index(local_path: Path | None = None, verbose: bool = True) -> dict:
         return {"configured": False}
     local_path = Path(local_path or config.DB_PATH)
 
-    last_err = None
-    for attempt in range(_UPLOAD_INDEX_RETRIES):
-        try:
-            client.upload_file(str(local_path), config.R2_BUCKET, INDEX_KEY)
-            if verbose:
-                print(f"האינדקס ({local_path.stat().st_size / 1e6:.1f}MB) הועלה ל-R2.")
-            return {"configured": True}
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            if verbose:
-                print(f"  ניסיון {attempt + 1}/{_UPLOAD_INDEX_RETRIES} להעלאת "
-                      f"האינדקס נכשל ({e}) — מנסה שוב בעוד {5 * (attempt + 1)}s...")
-            time.sleep(5 * (attempt + 1))
+    snapshot = None
+    upload_path = local_path
+    try:
+        snapshot = _snapshot_db(local_path)
+        upload_path = snapshot
+    except Exception as e:  # noqa: BLE001
+        if verbose:
+            print(f"  לא הצלחתי ליצור עותק עקבי ({e}) — מעלה ישירות את הקובץ החי.")
 
-    if verbose:
-        print(f"העלאת האינדקס נכשלה סופית אחרי {_UPLOAD_INDEX_RETRIES} ניסיונות: {last_err}")
-    return {"configured": True, "error": str(last_err)}
+    try:
+        last_err = None
+        for attempt in range(_UPLOAD_INDEX_RETRIES):
+            try:
+                client.upload_file(str(upload_path), config.R2_BUCKET, INDEX_KEY)
+                if verbose:
+                    print(f"האינדקס ({upload_path.stat().st_size / 1e6:.1f}MB) הועלה ל-R2.")
+                return {"configured": True}
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if verbose:
+                    print(f"  ניסיון {attempt + 1}/{_UPLOAD_INDEX_RETRIES} להעלאת "
+                          f"האינדקס נכשל ({e}) — מנסה שוב בעוד {5 * (attempt + 1)}s...")
+                time.sleep(5 * (attempt + 1))
+
+        if verbose:
+            print(f"העלאת האינדקס נכשלה סופית אחרי {_UPLOAD_INDEX_RETRIES} ניסיונות: {last_err}")
+        return {"configured": True, "error": str(last_err)}
+    finally:
+        if snapshot is not None and snapshot.exists():
+            snapshot.unlink(missing_ok=True)
 
 
 def sync_index(local_path: Path | None = None) -> bool:
