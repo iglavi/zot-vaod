@@ -73,7 +73,11 @@ def summarize_daily_download() -> str:
         return "לא נמצאה ריצת הורדה תקינה בלוג של היום (ייתכן שנכשלה לפני שהגיעה לסיכום)."
 
     new_files, existing, dl_errors = (int(x) for x in dl_m.groups())
-    lines = [f"החלטות חדשות שירדו היום: {new_files} (מתוכן {existing} כבר היו קיימות)."]
+    lines = [
+        f"החלטות חדשות שירדו היום: {new_files} "
+        f"(מתוך {new_files + existing:,} קבצים שנבדקו בטווח הימים שנסרק, "
+        f"{existing:,} כבר היו קיימים מהורדות קודמות)."
+    ]
     if dl_errors:
         lines.append(f"אזהרה: {dl_errors} שגיאות בהורדה.")
 
