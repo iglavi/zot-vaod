@@ -3,6 +3,7 @@
 # (zot.storage.upload_index/sync_index) — האתר מוריד אותו משם בהפעלה.
 data/index.db
 data/index.db.bak*
+data/index_upload_snapshot.db
 data/.*.synced_etag
 data/*.db-journal
 data/*.db-wal
