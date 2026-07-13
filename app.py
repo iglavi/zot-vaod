@@ -12,18 +12,19 @@ from __future__ import annotations
 import html as _html
 import os
 import re
-import sqlite3
 from datetime import date
 
 import streamlit as st
 
 
 def safe_db_call(fn, *args, **kwargs):
-    """מריץ שאילתת מסד-נתונים; במקרה של תקלה טכנית (למשל אי-התאמת סכימה
-    זמנית בין קוד לנתונים) מציג הודעה ידידותית במקום stack trace גולמי."""
+    """מריץ שאילתת מסד-נתונים; במקרה של תקלה טכנית כלשהי (שגיאת SQLite,
+    קובץ האינדקס לא זמין רגעית עקב סנכרון מקביל מול R2 וכו') מציג הודעה
+    ידידותית במקום stack trace גולמי שמקריס את כל האפליקציה."""
     try:
         return fn(*args, **kwargs)
-    except sqlite3.Error:
+    except Exception as e:  # noqa: BLE001
+        print(f"safe_db_call: {fn.__name__} failed: {type(e).__name__}: {e}")
         st.error("אירעה תקלה זמנית בטעינת הנתונים. נסו לרענן את הדף בעוד רגע.")
         st.stop()
 
