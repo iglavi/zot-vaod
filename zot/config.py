@@ -50,8 +50,9 @@ GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
 # ---- הגדרות מנוע ה-AI ----
-# ברירת המחדל היא Claude Opus 4.8. אפשר להוזיל עלויות עם claude-sonnet-5.
-AI_MODEL = os.environ.get("ZOT_MODEL", "claude-opus-4-8")
+# ברירת המחדל היא Claude Sonnet 5 — מהיר וזול משמעותית מ-Opus 4.8, ועדיין
+# ברמה גבוהה מאוד למשימה (ניתוח/סיכום פסקי דין שסופקו לו, לא מחקר פתוח).
+AI_MODEL = os.environ.get("ZOT_MODEL", "claude-sonnet-5")
 
 # מודל לשלב הראשון (חילוץ מילות חיפוש + תאריכים מהשאלה) — משימה פשוטה
 # שלא זקוקה לעוצמת המודל הראשי, ומריצים אותה *לפני* שההזרמה (streaming)
