@@ -53,6 +53,12 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 # ברירת המחדל היא Claude Opus 4.8. אפשר להוזיל עלויות עם claude-sonnet-5.
 AI_MODEL = os.environ.get("ZOT_MODEL", "claude-opus-4-8")
 
+# מודל לשלב הראשון (חילוץ מילות חיפוש + תאריכים מהשאלה) — משימה פשוטה
+# שלא זקוקה לעוצמת המודל הראשי, ומריצים אותה *לפני* שההזרמה (streaming)
+# של התשובה מתחילה בכלל. מודל מהיר כאן מקצר משמעותית את הזמן עד שהמשתמש
+# רואה תחילת תשובה.
+AI_ANALYZE_MODEL = os.environ.get("ZOT_ANALYZE_MODEL", "claude-haiku-4-5")
+
 # כמה פסקי דין להעביר למודל בכל שאלה, וכמה תווים מכל אחד
 AI_MAX_DOCS = int(os.environ.get("ZOT_AI_MAX_DOCS", "8"))
 AI_MAX_CHARS_PER_DOC = int(os.environ.get("ZOT_AI_MAX_CHARS", "6000"))
