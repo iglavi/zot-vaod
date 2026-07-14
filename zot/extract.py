@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 from .config import HEB_MONTHS
@@ -28,6 +29,14 @@ _MONTHS_ALT = "|".join(HEB_MONTHS)
 _JUDGE_RE = re.compile(r"[לב]פנ[יי]\s*\d*\s*:?\s*כב(?:ו?ד|['׳])?\s*(.{0,150})", re.DOTALL)
 # תבנית תאריך לועזי בתוך גוף פסק הדין: "01 ינואר 2026"
 _DATE_RE = re.compile(r"(\d{1,2})\s+(" + _MONTHS_ALT + r")\s+(\d{4})")
+# גיבוי: שורת החתימה הסטנדרטית בסוף פסקי דין רבים — "ניתן/ניתנה היום,
+# ט' בסיוון התשפ"ו (25.5.2026)." בלי זה, תאריך ההחלטה נשאר ריק במסמכים
+# שבהם התאריך הלועזי מופיע רק שם (לא ליד 'לפני'/תחילת המסמך) — במיוחד
+# בפסקי דין, לרוב בית ~19% ממסמכי הביניים עם decision_date ריק בפועל.
+# ממוקד ל'ניתן/ניתנה' ליד תאריך בסוגריים — לא לתאריך מספרי גורף בטקסט
+# (שעלול להיות תאריך הגשה/דיון אחר, לא תאריך ההחלטה עצמה) — ולוקח את
+# ההתאמה *האחרונה* בטקסט, כי שורת החתימה כמעט תמיד האחרונה מסוגה.
+_DATE_SIGNOFF_RE = re.compile(r"(?:ניתן|ניתנה)\b.{0,60}?\((\d{1,2})\.(\d{1,2})\.(\d{2,4})\)")
 # מילים שמסמנות את סוף שם השופט/ת (תארים, תפקידי צדדים, מונחי פתיח).
 # הוסר 'נ\'' (קיצור 'נגד'): מתנגש עם ראשי-תיבות של שמות שופטים שמתחילים
 # באות נ' (למשל 'נ\' הנדל') וגוזר את שם המשפחה. 'נגד' המלא, שאינו מעורפל
@@ -185,20 +194,45 @@ def extract_judge(text: str) -> str:
     return ", ".join(names)
 
 
+# טווח שנים סביר לבדיקת תקינות: לפני קום המדינה אין פסקי דין ישראליים,
+# ומעבר לשנה הבאה מ'עכשיו' זו כמעט תמיד ספרה שסורקה/הוזחה בטעות (למשל
+# תאריך מעורבב ממש"מ ישן: 'ניתן היום ... )13.32.39(' — חודש 32 לא קיים).
+_MIN_PLAUSIBLE_YEAR = 1948
+_MAX_PLAUSIBLE_YEAR = 2027
+
+
+def _valid_iso_date(day: int, month: int, year: int) -> str:
+    """מחזיר 'YYYY-MM-DD' רק אם זה תאריך אמיתי וסביר, אחרת ''."""
+    if not (_MIN_PLAUSIBLE_YEAR <= year <= _MAX_PLAUSIBLE_YEAR):
+        return ""
+    try:
+        date(year, month, day)  # מוודא יום/חודש חוקיים (כולל שנים מעוברות)
+    except ValueError:
+        return ""
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
 def extract_decision_date(text: str) -> str:
     """מחלץ את תאריך ההחלטה (הלועזי) ומחזיר ISO 'YYYY-MM-DD', או ''."""
     if not text:
         return ""
     m = _DATE_RE.search(text)
-    if not m:
-        return ""
-    day = int(m.group(1))
-    month = HEB_MONTHS[m.group(2)]
-    year = int(m.group(3))
-    try:
-        return f"{year:04d}-{month:02d}-{day:02d}"
-    except Exception:
-        return ""
+    if m:
+        result = _valid_iso_date(int(m.group(1)), HEB_MONTHS[m.group(2)], int(m.group(3)))
+        if result:
+            return result
+    # גיבוי: שורת חתימה "ניתן/ניתנה היום... (DD.MM.YYYY)" — לוקחים את
+    # ההתאמה האחרונה (החתימה כמעט תמיד אחרונה, לא הפניה לפסק דין אחר).
+    for m2 in reversed(list(_DATE_SIGNOFF_RE.finditer(text))):
+        day, month, year = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+        if year < 100:
+            # שנה דו-ספרתית: המאגר כולל פסקי דין מתחילת שנות ה-90 ואילך —
+            # "99" הוא 1999 (לא 2099). חלון סביר: 00-30 -> 20XX, 31-99 -> 19XX.
+            year += 2000 if year <= 30 else 1900
+        result = _valid_iso_date(day, month, year)
+        if result:
+            return result
+    return ""
 
 
 # זיהוי כותרת פסק הדין: {בית משפט} {סוג תיק} {מספר תיק} {צדדים} לפני ...
