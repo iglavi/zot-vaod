@@ -66,22 +66,44 @@ def _read_docx(p: Path) -> str:
     return "\n".join(paragraphs)
 
 
+# ארכיון ישן (קבצים עם סיומות לא-סטנדרטיות כמו .B01/.N02/.V01, כנראה
+# מהמרה/סריקה ישנה בת עשרות שנים) שבו טקסט עברי נשמר על הדיסק כשהוא כבר
+# פגום מלכתחילה: בתים בקידוד CP1255 (עברית) פוענחו בטעות כ-CP1252
+# ('ANSI' מערבי) ונשמרו מחדש — כך ש-'בית המשפט' נהיה 'áéú äîùôè'. זה
+# UTF-8 תקין לגמרי (אין שגיאת קידוד לתפוס), רק שהתוכן שגוי מיסודו —
+# ולכן כל שדות המטא-דאטה (חסרי תווים עבריים אמיתיים להתאמה) יוצאים ריקים
+# עבור ~860 מסמכים כאלה. מתקן בהמרה הפוכה: קידוד בחזרה כ-CP1252 ופענוח
+# כ-CP1255 משחזר את הטקסט העברי המקורי במדויק.
+_MOJIBAKE_SIGNATURE = "áéú äîùôè"  # 'בית המשפט' אחרי CP1255->CP1252
+
+
+def _fix_cp1255_mojibake(text: str) -> str:
+    if not text or _MOJIBAKE_SIGNATURE not in text:
+        return text
+    try:
+        return text.encode("cp1252").decode("cp1255")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def read_text(path: str | Path) -> str:
     """קורא טקסט מלא מקובץ pdf/docx/txt. מחזיר מחרוזת ריקה במקרה כשל."""
     p = Path(path)
     suffix = p.suffix.lower()
     try:
         if suffix == ".docx":
-            return _read_docx(p)
-        if suffix == ".doc":
+            text = _read_docx(p)
+        elif suffix == ".doc":
             import docx  # python-docx (לא תומך רשמית ב-.doc הישן, best-effort)
 
             document = docx.Document(str(p))
             parts = [para.text for para in document.paragraphs]
-            return "\n".join(t for t in parts if t and t.strip())
-        if suffix == ".pdf":
-            return _read_pdf(p)
-        return p.read_text(encoding="utf-8", errors="ignore")
+            text = "\n".join(t for t in parts if t and t.strip())
+        elif suffix == ".pdf":
+            text = _read_pdf(p)
+        else:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        return _fix_cp1255_mojibake(text)
     except Exception:
         return ""
 
