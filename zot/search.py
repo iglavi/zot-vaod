@@ -258,7 +258,9 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
 
     conn.close()
 
-    # הסרת כפילויות (רשומות מטא-דאטה שונות המצביעות לאותו פסק דין)
+    # הסרת כפילויות (רשומות מטא-דאטה שונות המצביעות לאותו פסק דין) — בלי
+    # הגבלה ל-limit כאן עדיין, כדי ש-_diversify_supreme יוכל לבחור מתוך
+    # כל המועמדים שנשלפו (limit*3), לא רק מתוך ה-top-K הגולמי.
     seen: set = set()
     unique = []
     for r in rows:
@@ -267,9 +269,35 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
             continue
         seen.add(key)
         unique.append(r)
-        if len(unique) >= limit:
+
+    if not court_scope:
+        unique = _diversify_supreme(unique, limit)
+    return unique[:limit]
+
+
+def _is_supreme_row(row: sqlite3.Row) -> bool:
+    return any((row[c] or "").startswith("supreme/")
+               for c in ("file_relpath", "file_relpath_pdf", "file_relpath_docx"))
+
+
+def _diversify_supreme(rows: list, limit: int) -> list:
+    """מוודא ייצוג של פסיקת בית המשפט העליון במדגם המוצג ל-AI, גם כשדירוג
+    BM25 הגולמי מעדיף פסקי דין שגרתיים מערכאות נמוכות (שלעיתים חוזרים על
+    מילות החיפוש בצפיפות גבוהה יותר, בלי שזה משקף משמעות משפטית רבה
+    יותר) — כדי שתשובה על שאלה רחבה לא תתבסס רק על תקדימים שוליים בעוד
+    פסיקה מנחה של העליון על אותו נושא כלל לא נכנסת ל-top-K. פועל רק
+    כש-court_scope ריק (המשתמש לא ביקש במפורש עליון/לא-עליון בלבד) —
+    אחרת זה יסתור את מה שהמשתמש ביקש בפירוש."""
+    supreme_idx = [i for i, r in enumerate(rows) if _is_supreme_row(r)]
+    if not supreme_idx:
+        return rows
+    n_supreme = min(len(supreme_idx), max(1, limit // 2))
+    keep = set(supreme_idx[:n_supreme])
+    for i in range(len(rows)):
+        if len(keep) >= limit:
             break
-    return unique
+        keep.add(i)
+    return [rows[i] for i in sorted(keep)]
 
 
 # תיוג ודאי של 'ארכיון העליון' לפי נתיב הקובץ (supreme/...), לא לפי שדה
