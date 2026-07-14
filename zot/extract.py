@@ -19,18 +19,20 @@ _MONTHS_ALT = "|".join(HEB_MONTHS)
 # כללי מאוחר יותר בגוף ההחלטה (למשל 'יובא לפני כבוד הרשם' בלי שם). גם
 # ספרה בודדת שנדבקת ל'לפני/בפני' (כ-176 מסמכים בפועל, כנראה שריד של
 # הערת-שוליים/מספר עמוד שנשרך אל תוך זרימת הטקסט) חייבת להיות אופציונלית.
-_JUDGE_RE = re.compile(r"[לב]פנ[יי]\s*\d*\s*:?\s*כב(?:ו?ד|['׳])?\s*(.{0,70})")
+# חלון הלכידה (150 תווים) גדול מספיק כדי לכלול מותב של כמה שופטים —
+# ראו _split_judge_panel, שמפצל את הקטע הזה למותב שלם, לא רק שופט/ת אחד/ת.
+_JUDGE_RE = re.compile(r"[לב]פנ[יי]\s*\d*\s*:?\s*כב(?:ו?ד|['׳])?\s*(.{0,150})")
 # תבנית תאריך לועזי בתוך גוף פסק הדין: "01 ינואר 2026"
 _DATE_RE = re.compile(r"(\d{1,2})\s+(" + _MONTHS_ALT + r")\s+(\d{4})")
 # מילים שמסמנות את סוף שם השופט/ת (תארים, תפקידי צדדים, מונחי פתיח).
-# 'כבוד' בפני עצמו מסמן שופט/ת נוסף/ת במותב — כשהחילוץ מ-PDF איבד את
-# מעבר השורה בין שורות שופטים נפרדות ('...וילנרכבוד השופט...'), זה מונע
-# הידבקות של כל חברי המותב לשם שופט אחד ארוך.
 _JUDGE_STOP = re.compile(
     r"העתק|פסק[\s\-]?דין|החלט|בעניין|בין\b|נגד|נ['׳]|מיום|כבוד|"
     r"מבקש|משיב|עורר|מערער|תוב[ ע]|נתבע|עות[ר]|המבקש|בקשה|רקע|"
     r"ת[\"״]?א|\d|\n"
 )
+# פיצול מותב של כמה שופטים שהודבקו זה לזה בלי רווח/שורה חדשה בחילוץ מה-PDF
+# ('...עמיתכבוד השופט...') — 'כבוד' עצמו מסמן תחילת שופט/ת נוסף/ת במותב.
+_JUDGE_PANEL_SPLIT = re.compile(r"כבוד")
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -120,16 +122,26 @@ def _read_pdf(p: Path) -> str:
 
 
 def extract_judge(text: str) -> str:
-    """מחלץ את שם השופט/ת (כולל תואר) משורת 'לפני כב\'...'."""
+    """מחלץ את שם/שמות השופט/ת (כולל תואר) משורת 'לפני כב\'...'.
+
+    תומך במותב של כמה שופטים שהודבקו זה לזה בלי מעבר שורה בחילוץ מה-PDF
+    ('...עמיתכבוד השופט...') — מפצל לפי 'כבוד' ומחזיר את כולם, מופרדים
+    בפסיק, במקום רק את הראשון/ה."""
     if not text:
         return ""
     m = _JUDGE_RE.search(text)
     if not m:
         return ""
     seg = m.group(1)
-    seg = _JUDGE_STOP.split(seg)[0]
-    seg = re.sub(r"\s+", " ", seg).strip(" .,:-‏‎")
-    return seg
+    names = []
+    for chunk in _JUDGE_PANEL_SPLIT.split(seg):
+        piece = _JUDGE_STOP.split(chunk)[0]
+        piece = re.sub(r"\s+", " ", piece).strip(" .,:-‏‎")
+        if len(piece) >= 4:
+            names.append(piece)
+        else:
+            break
+    return ", ".join(names)
 
 
 def extract_decision_date(text: str) -> str:
@@ -159,6 +171,76 @@ _PARTIES_STOP = re.compile(r"[לב]פנ[יי]|תיק\s+חיצוני")
 # וכד' הכילו את המילה בשם הצד עצמו, וגרמו לקטיעה שגויה של השם. משמש רק
 # כגיבוי אם לא נמצא 'לפני/בפני' תקין באותה שורה כלל.
 _PARTIES_STOP_FALLBACK = re.compile(r"כב(?:ו?ד|['׳])")
+
+# גיבוי לחילוץ צדדים: חלק מהמסמכים (בעיקר בג"ץ/החלטות ביניים) מציגים
+# קודם את השופט/ים ('לפני: כבוד...') ורק אחר-כך, בתוויות מפורשות
+# ('העותרים:'/'המבקשת:'/'המשיבים:' וכד'), את שמות הצדדים — הפוך מהסדר
+# שה-extraction הרגיל מניח (צדדים ואז שופט/ים). בלי הגיבוי הזה parties
+# יוצא ריק לגמרי, כי _PARTIES_STOP תופס את 'לפני' כמעט מיד אחרי מספר
+# התיק. גם תומך בתיקים מאוחדים עם כמה תוויות עוקבות ('העותרים בבג"ץ
+# X:\nהעותרים בבג"ץ Y:') — לוקח את השם הראשון מתחת לתווית הראשונה
+# (התיק שמספרו כבר חולץ), לפי בקשת המשתמש: "אם יש כמה שמות בצד, שם
+# ההליך הוא השם הראשון בכל צד".
+_PLAINTIFF_LABEL_RE = re.compile(
+    r"(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?)[^:\n]{0,40}:"
+)
+_DEFENDANT_LABEL_RE = re.compile(r"(?:המשיב(?:ה|ים)?|הנתבע(?:ת|ים)?)[^:\n]{0,40}:")
+_VS_RE = re.compile(r"\bנגד\b")
+_LIST_ITEM_START_RE = re.compile(r"^\s*\d+[.)]\s*")
+_PARTY_NAME_STOP_RE = re.compile(
+    r"\n|\d+[.)]|" + _PLAINTIFF_LABEL_RE.pattern + "|" + _DEFENDANT_LABEL_RE.pattern + r"|\bנגד\b"
+)
+
+
+def _skip_stacked_labels(segment: str, label_re: re.Pattern) -> str:
+    """מדלג על תוויות-צד עוקבות ('העותרים בבג"ץ X:\\nהעותרים בבג"ץ Y:')
+    עד לתחילת התוכן בפועל — כדי שלא ניחשב את התווית השנייה כ'שם הצד'."""
+    s = segment
+    while True:
+        stripped = s.lstrip()
+        m = label_re.match(stripped)
+        if not m:
+            return stripped
+        s = stripped[m.end():]
+
+
+def _first_party_name(segment: str) -> tuple[str, bool]:
+    """מחזיר (השם הראשון, האם יש עוד שמות באותו צד) מתוך הקטע שבין
+    תווית הצד לעצירה הבאה (שורה חדשה, פריט ממוספר הבא, תווית אחרת, 'נגד')."""
+    s = segment.lstrip()
+    s = _LIST_ITEM_START_RE.sub("", s, count=1)
+    m = _PARTY_NAME_STOP_RE.search(s)
+    name = (s[:m.start()] if m else s[:80]).strip(" .,:-–'\"׳״")
+    if not m:
+        has_more = False
+    elif re.match(r"\d+[.)]", m.group()):
+        has_more = True  # העצירה עצמה היא הפריט הממוספר הבא
+    else:
+        has_more = bool(re.match(r"\d+[.)]", s[m.end():].lstrip()))
+    return name, has_more
+
+
+def _extract_parties_after_judges(text: str) -> str:
+    """גיבוי: מחפש תוויות צד מפורשות בתחילת המסמך (אחרי אזור השופט/ים),
+    ובונה מהן 'שם ראשון נ' שם ראשון' (עם 'ואח'' אם יש עוד באותו צד)."""
+    window = text[:2500]
+    p_label = _PLAINTIFF_LABEL_RE.search(window)
+    if not p_label:
+        return ""
+    vs = _VS_RE.search(window, p_label.end())
+    d_label = _DEFENDANT_LABEL_RE.search(window, vs.end() if vs else p_label.end())
+    if not d_label:
+        return ""
+    p_content = _skip_stacked_labels(window[p_label.end():(vs.start() if vs else d_label.start())], _PLAINTIFF_LABEL_RE)
+    d_content = _skip_stacked_labels(window[d_label.end():], _DEFENDANT_LABEL_RE)
+    p_name, p_more = _first_party_name(p_content)
+    d_name, d_more = _first_party_name(d_content)
+    if not (2 <= len(p_name) <= 80) or not (2 <= len(d_name) <= 80):
+        return ""
+    p_disp = p_name + (" ואח'" if p_more else "")
+    d_disp = d_name + (" ואח'" if d_more else "")
+    return f"{p_disp} נ' {d_disp}"
+
 
 # התאמה נחשבת כותרת אמיתית רק אם נמצאה קרוב לתחילת המסמך. אחרת, כנראה
 # שההתאמה מקרית (איזשהו מספר בטקסט הגוף, לא מספר התיק בפועל) — וניפול
@@ -328,6 +410,9 @@ def extract_metadata(text: str) -> dict:
         # לפני 'לפני/בפני', זה מה שהיה נשאר ונשמר בטעות כאילו הוא שם הצד.
         if 2 <= len(parties) <= 80:
             out["parties"] = parties
+
+    if not out["parties"]:
+        out["parties"] = _extract_parties_after_judges(text)
 
     out["judge"] = extract_judge(text)
     out["decision_date"] = extract_decision_date(text)
