@@ -72,9 +72,11 @@ def _read_docx(p: Path) -> str:
 # ('ANSI' מערבי) ונשמרו מחדש — כך ש-'בית המשפט' נהיה 'áéú äîùôè'. זה
 # UTF-8 תקין לגמרי (אין שגיאת קידוד לתפוס), רק שהתוכן שגוי מיסודו —
 # ולכן כל שדות המטא-דאטה (חסרי תווים עבריים אמיתיים להתאמה) יוצאים ריקים
-# עבור ~860 מסמכים כאלה. מתקן בהמרה הפוכה: קידוד בחזרה כ-CP1252 ופענוח
-# כ-CP1255 משחזר את הטקסט העברי המקורי במדויק.
-_MOJIBAKE_SIGNATURE = "áéú äîùôè"  # 'בית המשפט' אחרי CP1255->CP1252
+# עבור מסמכים כאלה. מתקן בהמרה הפוכה: קידוד בחזרה כ-CP1252 ופענוח כ-CP1255
+# משחזר את הטקסט העברי המקורי במדויק. 'כבוד' (לא 'בית המשפט') משמש סימן-
+# היכר: מופיע כמעט בכל מסמך (שורת הצגת השופט/ים), בעוד ש'בית המשפט'
+# נכתב לפעמים עם מקף ('בבית-המשפט') ולא רווח — מפספס חלק מהמסמכים.
+_MOJIBAKE_SIGNATURE = "ëáåã"  # 'כבוד' אחרי CP1255->CP1252
 
 
 def _fix_cp1255_mojibake(text: str) -> str:
@@ -114,12 +116,22 @@ def read_text(path: str | Path) -> str:
 # הפוכה לגמרי. מזהים את התופעה לפי מילת-מפתח נפוצה שמופיעה הפוכה (ולא
 # במצורה הרגילה) בטקסט שחולץ, ומתקנים עם python-bidi (base_dir='R'
 # משמר נכון גם רצפי מספרים/אנגלית מוטמעים, בניגוד להיפוך שורה גולמי).
+# 'בית המשפט' (עם ה"א הידיעה) לא תמיד מופיע — מסמכים רבים כותבים 'בית
+# משפט השלום/העבודה' וכד' בלי ה"א על 'משפט' עצמו — ולכן גם 'לפני/בפני'
+# ההפוך (שורת הצגת השופט/ים, כמעט אוניברסלי בכל מסמך) משמש סימן-היכר
+# נוסף, כדי לא לפספס מסמכים הפוכים שלא כוללים את הביטוי המדויק הראשון.
 _REVERSED_SIGNATURE = "טפשמה תיב"  # 'בית המשפט' הפוך
+_REVERSED_SIGNATURE_2 = re.compile(r"ינפ[בל]")  # 'לפני'/'בפני' הפוך
 _NORMAL_SIGNATURE = "בית המשפט"
+_NORMAL_SIGNATURE_2 = re.compile(r"[לב]פני")
 
 
 def _fix_visual_hebrew(text: str) -> str:
-    if not text or _REVERSED_SIGNATURE not in text or _NORMAL_SIGNATURE in text:
+    if not text:
+        return text
+    has_reversed = _REVERSED_SIGNATURE in text or _REVERSED_SIGNATURE_2.search(text)
+    has_normal = _NORMAL_SIGNATURE in text or _NORMAL_SIGNATURE_2.search(text)
+    if not has_reversed or has_normal:
         return text
     try:
         from bidi.algorithm import get_display
