@@ -416,8 +416,18 @@ def extract_metadata(text: str) -> dict:
 
     out["judge"] = extract_judge(text)
     out["decision_date"] = extract_decision_date(text)
+    # הסדר כאן קריטי: מסמכי הכרעת-דין/גזר-דין (בעיקר תיקים פליליים) כמעט
+    # תמיד כוללים גם את הביטוי הגנרי 'העתק החלטה מפרוטוקול' (תבנית-עטיפה
+    # של המסמך) *לפני* הכותרת הספציפית שלהם — כך שבדיקת 'החלט' לבדה הייתה
+    # מסווגת את כולם בטעות כ'החלטה' גנרית, בלי קשר לכך שהם דווקא הכרעת
+    # דין/גזר דין (נבדק בפועל: ~38,000 מסמכים בקורפוס נפגעו מכך). לכן
+    # הביטויים הספציפיים האלה נבדקים *לפני* הגיבוי הגנרי, לא רק 'פסק דין'.
     if "פסק דין" in head or "פסק-דין" in head:
         out["decision_type"] = "פסק דין"
+    elif "גזר דין" in head or "גזר-דין" in head:
+        out["decision_type"] = "גזר דין"
+    elif "הכרעת דין" in head or "הכרעת-דין" in head:
+        out["decision_type"] = "הכרעת דין"
     elif "החלט" in head:
         out["decision_type"] = "החלטה"
     return out
