@@ -320,9 +320,15 @@ def extract_decision_date(text: str) -> str:
 
 
 # זיהוי כותרת פסק הדין: {בית משפט} {סוג תיק} {מספר תיק} {צדדים} לפני ...
+# מסמכי עליון ישנים (בעיקר 1993-1996) כותבים את מספר התיק הפוך —
+# "שנה / מספר" ("ע"פ 97 / 1672") במקום "מספר/שנה" הרגיל ("7075/93") —
+# ותמיד עם רווח לפחות בצד אחד של ה-'/' (הפורמט הרגיל צמוד תמיד: 'ד/ה'
+# בלי רווחים בכלל, מה שמבחין בין שתי הצורות בלי לנחש). num_rev/year_first
+# מנורמלים חזרה ל'מספר/שנה' הרגיל ב-extract_metadata, לעקביות בתצוגה.
 _HEAD_RE = re.compile(
     r"(?P<ctype>[֐-׿\"״]{2,6})\s+"
-    r"(?P<num>\d{2,6}[-/]\d{1,2}(?:-\d{2,4})?)"
+    r"(?:(?P<num>\d{2,6}[-/]\d{1,2}(?:-\d{2,4})?)"
+    r"|(?P<year_first>\d{2})(?:\s+/\s*|\s*/\s+)(?P<num_rev>\d{1,6}))"
 )
 # סימני-עצירה אמינים תמיד (פותחים בפועל את שורת השופט/ת או 'תיק חיצוני').
 _PARTIES_STOP = re.compile(r"[לב]פנ[יי]|תיק\s+חיצוני")
@@ -573,7 +579,10 @@ def extract_metadata(text: str) -> dict:
             court = head[:m.start()].strip(" -–:")
         out["court"] = _normalize_court(court)
         out["case_type"] = ctype
-        out["case_number"] = m.group("num").strip()
+        if m.group("num"):
+            out["case_number"] = m.group("num").strip()
+        else:
+            out["case_number"] = f"{m.group('num_rev')}/{m.group('year_first')}"
         rest = head[m.end():]
         # תיקים מאוחדים/צמודים חושפים מספר-תיק שני (לפעמים גם שלישי) לפני
         # השורה עם 'לפני/בפני' — בלי לזהות אותו כסימן-עצירה נוסף, הוא היה
