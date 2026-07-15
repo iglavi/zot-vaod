@@ -175,12 +175,17 @@ def keyword_verdict(terms: list[str], db_path: Path | None = None) -> sqlite3.Ro
 
 def landmark_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
     """פסק דין 'מרכזי' — best-effort: נבחר אקראית מתוך פסקי דין של בית
-    המשפט העליון (לא ניתוח אמיתי של חשיבות/תקדימיות, רק קירוב סביר)."""
+    המשפט העליון (לא ניתוח אמיתי של חשיבות/תקדימיות, רק קירוב סביר).
+
+    משתמש ב-_SUPREME_PATH_COND (נתיב קובץ, ודאי) ולא בשדה court הטקסטואלי
+    כמו קודם — court עשוי להישאר ריק גם עבור פסקי דין של העליון (חילוץ
+    best-effort), ו-'court LIKE %עליון%' דורש סריקה מלאה (לא ניתן
+    לאינדקס עם תו-בר פותח); LIKE 'supreme/%' הוא prefix match שכן."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
     row = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
-        f"AND court LIKE '%עליון%' AND decision_type = 'פסק דין' "
+        f"AND {_SUPREME_PATH_COND} AND decision_type = 'פסק דין' "
         f"ORDER BY RANDOM() LIMIT 1"
     ).fetchone()
     conn.close()

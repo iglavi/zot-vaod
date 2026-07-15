@@ -269,14 +269,24 @@ _MATCH_MODE_LABELS = {"any": "כל מילה בנפרד", "exact": "ביטוי מ
 _SORT_LABELS = {"newest": "חדש ← ישן", "oldest": "ישן ← חדש", "longest": "לפי אורך טקסט"}
 
 
+# בלי מטמון, הרשימות/הסטטיסטיקות האלה נשלפות מהמסד מחדש בכל rerun של
+# הסקריפט — כלומר בכל אינטראקציה של המשתמש (הקלדה, לחיצה) בכל טאב שהוא,
+# כי st.tabs לא מדלג על גוף טאבים לא-פעילים. אחרי הוספת אינדקסים ל-DB
+# (ראו zot/ingest.py: INDEX_SCHEMA) השאילתות עצמן כבר מהירות מאוד, אבל
+# אין סיבה לשלוף מחדש בכל rerun כשהתוכן משתנה לכל היותר פעם ביום — TTL
+# של שעה תואם את זה שכבר קיים ב-_sync_index_from_r2 למטה.
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_simple_search_meta():
+    return (safe_db_call(search.stats),
+            [""] + safe_db_call(search.distinct_courts),
+            [""] + safe_db_call(search.distinct_proceedings))
+
+
 def tab_simple():
     if not ensure_index_ui():
         return
-    s = safe_db_call(search.stats)
+    s, courts, proceedings = _cached_simple_search_meta()
     st.caption(f"במאגר: {s['with_documents']:,} החלטות")
-
-    courts = [""] + safe_db_call(search.distinct_courts)
-    proceedings = [""] + safe_db_call(search.distinct_proceedings)
 
     with st.form("simple_search"):
         c1, c2 = st.columns(2)

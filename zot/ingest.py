@@ -122,6 +122,23 @@ CREATE VIRTUAL TABLE verdicts_fts USING fts5(
 );
 """
 
+# בלי אינדקסים, כל שאילתה על עמודה שאינה id (למשל DISTINCT court, מיון
+# לפי תאריך, סינון has_document/proceeding) היא סריקה מלאה על 630K+ שורות
+# עם full_text ענק inline — שניות שלמות לכל אינטראקציה באתר. נבדק בפועל:
+# distinct_courts ירד מ-1.15s ל-12ms אחרי הוספת האינדקסים האלה. אינדקסים
+# חלקיים (WHERE court != '') לא עבדו באופן עקבי (ה-query planner לא תמיד
+# זיהה שהם רלוונטיים לשאילתת שוויון) — לכן אינדקסים מלאים על העמודה כולה.
+# IF NOT EXISTS כי זה רץ גם בנתיב האינקרementלי (לא רק בבנייה מלאה מחדש).
+INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS idx_verdicts_court ON verdicts(court);
+CREATE INDEX IF NOT EXISTS idx_verdicts_proceeding ON verdicts(proceeding);
+CREATE INDEX IF NOT EXISTS idx_verdicts_has_document ON verdicts(has_document);
+CREATE INDEX IF NOT EXISTS idx_verdicts_effdate ON verdicts(COALESCE(NULLIF(decision_date,''), filed_date));
+CREATE INDEX IF NOT EXISTS idx_verdicts_hasdoc_effdate ON verdicts(has_document, COALESCE(NULLIF(decision_date,''), filed_date));
+CREATE INDEX IF NOT EXISTS idx_verdicts_relpath ON verdicts(file_relpath);
+CREATE INDEX IF NOT EXISTS idx_verdicts_decision_type ON verdicts(decision_type);
+"""
+
 # מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה (בין אם מלאה או אינקרementלית),
 # כך שסיכום שכבר חושב לא מחושב שוב (וממילא לא משלם עליו שוב) בהרצות הבאות.
 CACHE_SCHEMA = """
@@ -260,6 +277,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         conn.executescript(SCHEMA)
         existing_stems = set()
         _log("אין אינדקס תואם (ראשון, או שמבנה הקוד השתנה) — בונה הכול מחדש.")
+
+    conn.executescript(INDEX_SCHEMA)
 
     _log(f"סורק את תיקיית המקור הראשית ({docs_dir})...")
     by_ext = _index_by_ext(docs_dir)
