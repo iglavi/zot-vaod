@@ -132,6 +132,32 @@ def _read_rtf(p: Path) -> str:
     return rtf_to_text(raw)
 
 
+# Word בינארי ישן (OLE2, ~14% מארכיון בית המשפט העליון) — python-docx לא
+# תומך בפורמט הזה בכלל. antiword (כלי CLI ישן אך יציב, מגיע מובנה עם Git
+# for Windows תחת mingw64/bin) יודע לקרוא אותו; '-m UTF-8.txt' חיוני כדי
+# שהפלט יהיה UTF-8 תקין במקום CP862/לטיני שגוי כברירת המחדל.
+def _read_ole2(p: Path) -> str:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["antiword", "-m", "UTF-8.txt", str(p)],
+            capture_output=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    text = result.stdout.decode("utf-8", errors="replace")
+    # antiword משרטט טבלאות Word (כאן: שדות הפתיח - בית משפט/מספר
+    # תיק/שופט/צדדים, כמעט תמיד בטבלה בתבניות הישנות) עם '|' כגבול עמודה.
+    # ה-'|' נדבק ישירות לתוכן התא הבא בלי רווח אמיתי ביניהם, ושובר את
+    # regex-י החילוץ שמצפים למילה הבאה מיד אחרי הכותרת (למשל 'לפני:|כבוד'
+    # במקום 'לפני: כבוד') — בפרט judge, שכמעט תמיד יצא ריק בלעדי זה.
+    return text.replace("|", " ")
+
+
 def read_text(path: str | Path) -> str:
     """קורא טקסט מלא מקובץ pdf/docx/txt. מחזיר מחרוזת ריקה במקרה כשל."""
     p = Path(path)
@@ -142,9 +168,7 @@ def read_text(path: str | Path) -> str:
             if kind == "rtf":
                 text = _read_rtf(p)
             elif kind == "ole2":
-                # Word בינארי ישן (OLE2) — אין כרגע דרך אמינה לחלץ טקסט
-                # ממנו; חוזרים ריק כדי שהקורא יפול ל-PDF, בדיוק כמו היום.
-                text = ""
+                text = _read_ole2(p)
             elif suffix == ".docx":
                 text = _read_docx(p)
             else:
@@ -314,6 +338,14 @@ _DEFENDANT_LABEL_RE = re.compile(
     r"(?:(?:המשיב(?:ה|ים)?|הנתבע(?:ת|ים)?)[^:\n]{0,40}:|"
     r"(?:נאשמ(?:ים|ת)?|הנאשמ(?:ים|ת)?)\s*\n)"
 )
+# חלק-משנה של תיק מאוחד, בכתיב גימטרייה ("- ל", "- כ\"א", "- י\"ד") —
+# בדיוק המקרה שהערת ה-TODO למעלה (ליד "תיקים מאוחדים... חלק-משנה כאות
+# בודדת") מזהה, אבל בפועל לא סינן: אות בודדת עם גרש ("ד'") או שתי אותיות
+# עם גרשיים ("כ"ז") עוברות את סינון האורך (2 <= len <= 80) כי הגרש/גרשיים
+# מוסיפים תו, כך שהתוצאה נשמרה כאילו הייתה שם צד אמיתי. בלט הרבה יותר
+# בקבצי OLE2/antiword (שם השורה "ע"א 1356/09 - כ"א" מודפסת כשורה אחת
+# בטבלה, בלי ':' שיפריד אותה מהשם), אבל התבנית קיימת גם במקורות אחרים.
+_GEMATRIA_ORDINAL_RE = re.compile(r"^[א-ת](?:['׳]|[\"״][א-ת])$")
 _VS_RE = re.compile(r"\bנגד\b")
 _LIST_ITEM_START_RE = re.compile(r"^\s*\d+[.)]\s*")
 _PARTY_NAME_STOP_RE = re.compile(
@@ -537,7 +569,7 @@ def extract_metadata(text: str) -> dict:
         # תיקים מאוחדים לפעמים מציינים חלק-משנה כאות/ספרה בודדת אחרי מספר
         # התיק ("בג"ץ 10016/16 – ל", "מ"ח 7929/96 - 1") — כשאין תוכן אמיתי
         # לפני 'לפני/בפני', זה מה שהיה נשאר ונשמר בטעות כאילו הוא שם הצד.
-        if 2 <= len(parties) <= 80:
+        if 2 <= len(parties) <= 80 and not _GEMATRIA_ORDINAL_RE.match(parties):
             out["parties"] = parties
 
     if not out["parties"]:
