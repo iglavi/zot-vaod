@@ -97,6 +97,15 @@ def _fix_cp1255_mojibake(text: str) -> str:
         return text
 
 
+# תווי בקרת-כיווניות בלתי-נראים (LRM/RLM ואח') ש-Word מוסיף סביב מספרים/
+# תאריכים בטקסט דו-כיווני — נעלמים בתצוגה אבל נדבקים ישירות בין '(' לספרה
+# הראשונה בשורת החתימה ("ניתנה היום... (‏15.5.2017)"), ושוברים את
+# _DATE_SIGNOFF_RE כי היא דורשת ספרה מיד אחרי הסוגר. הוסר ~90% מהמקרים
+# שבהם decision_date נשאר ריק. אין להם שום תפקיד סמנטי (רק רמז-רינדור),
+# כך שהסרה גורפת בטוחה.
+_BIDI_MARKS_RE = re.compile(r"[‎‏‪-‮⁦-⁩]")
+
+
 # ארכיון בית המשפט העליון (documents_supreme/) מכיל קבצים עם סיומת
 # '.docx' שרובם ככולם (~99% בפועל, מדגם) אינם OOXML תקין בכלל — אלא
 # קובצי RTF (~85%) או Word בינארי ישן מסוג OLE2 (~14%) ששמם שונה בטעות
@@ -181,7 +190,7 @@ def read_text(path: str | Path) -> str:
             text = _read_pdf(p)
         else:
             text = p.read_text(encoding="utf-8", errors="ignore")
-        return _fix_cp1255_mojibake(text)
+        return _BIDI_MARKS_RE.sub("", _fix_cp1255_mojibake(text))
     except Exception:
         return ""
 
