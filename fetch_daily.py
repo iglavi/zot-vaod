@@ -15,7 +15,7 @@
   DECISIONS_USER, DECISIONS_PASSWORD   — שם המשתמש והסיסמה
   DECISIONS_DOMAIN — דומיין NTLM (אופציונלי; ברירת מחדל: ריק)
   DECISIONS_URL    — כתובת הבסיס (ברירת מחדל: https://decisions.court.gov.il/)
-  DECISIONS_DAYS   — כמה תיקיות תאריך אחרונות להוריד (0 = כל הקיימות)
+  DECISIONS_DAYS   — כמה תיקיות תאריך אחרונות לבדוק (ברירת מחדל: 5; 0 = כל הקיימות)
 
 הרצה:  python fetch_daily.py
 """
@@ -262,7 +262,13 @@ def main() -> int:
     user = os.environ.get("DECISIONS_USER", "")
     password = os.environ.get("DECISIONS_PASSWORD", "")
     domain = os.environ.get("DECISIONS_DOMAIN", "")
-    only_days = int(os.environ.get("DECISIONS_DAYS", "0") or "0")
+    # ברירת המחדל הייתה 0 (לבדוק את כל תיקיות התאריך הקיימות, בכל ריצה —
+    # גדל ללא גבול עם גיל הארכיון). נבדק בפועל מול daily_log.txt: תיקיית
+    # יום חדשה נפתחת קטנה (500-800 קבצים) ותופחת פי 40-50 (ל-30,000+) תוך
+    # יום-יומיים, כי בתי המשפט ממשיכים להעלות אליה גם אחרי היום שלה, ואז
+    # מתייצבת. חלון של 5 ימים משאיר שוליים בטוחים אחרי שהצמיחה נעצרת, בלי
+    # לבדוק מחדש עשרות תיקיות ישנות-ויציבות בכל ריצה.
+    only_days = int(os.environ.get("DECISIONS_DAYS", "5") or "5")
 
     if not user or not password:
         print("חסרים פרטי גישה. הגדירו DECISIONS_USER ו-DECISIONS_PASSWORD (ראו .env.example).")
