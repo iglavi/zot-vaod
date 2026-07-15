@@ -94,7 +94,15 @@ def _fix_cp1255_mojibake(text: str) -> str:
     try:
         return text.encode("cp1252").decode("cp1255")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        return text
+        # מסמכים ישנים במיוחד (למשל תיקי antiword/OLE2 מ-1993-1994) מכילים
+        # לפעמים בייט בודד שהמיפוי לא הכיר, שהפך ל-U+FFFD (תו-מציין-כשל)
+        # בפענוח ה-UTF-8 הקודם. בלעדי הניקוי הזה, תו בודד כזה מפיל את כל
+        # ניסיון התיקון (encode נכשל על התו כולו), ומשאיר מסמך שלם בגיבריש —
+        # עדיף לאבד תו אחד ולתקן את כל השאר.
+        try:
+            return text.replace("�", "").encode("cp1252").decode("cp1255")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return text
 
 
 # תווי בקרת-כיווניות בלתי-נראים (LRM/RLM ואח') ש-Word מוסיף סביב מספרים/
