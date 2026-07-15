@@ -97,19 +97,62 @@ def _fix_cp1255_mojibake(text: str) -> str:
         return text
 
 
+# ארכיון בית המשפט העליון (documents_supreme/) מכיל קבצים עם סיומת
+# '.docx' שרובם ככולם (~99% בפועל, מדגם) אינם OOXML תקין בכלל — אלא
+# קובצי RTF (~85%) או Word בינארי ישן מסוג OLE2 (~14%) ששמם שונה בטעות
+# בזמן ארגון הארכיון (לפני עשרות שנים, לפני הפרויקט הזה). python-docx
+# נכשל בשקט על שניהם, וה-fallback ל-PDF (שסובל מבעיות היפוך-כיוון וזיהוי
+# תווים) הוא המקור לרוב בעיות הגיבריש/היפוך-טקסט שנמצאו הלילה. לכן
+# מזהים את הסוג האמיתי לפי בתי הפתיחה של הקובץ (לא לפי הסיומת שלו) —
+# RTF הוא טקסט נקי בלי הסיכון של PDF, כך שמקדימים אותו כשמזוהה.
+_OLE2_SIGNATURE = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+
+
+def _sniff_kind(p: Path) -> str:
+    """מזהה את הסוג האמיתי של הקובץ לפי בתי הפתיחה, לא לפי סיומת השם.
+    מחזיר 'docx' (ZIP/OOXML תקין), 'rtf', 'ole2' (Word בינארי ישן), או ''."""
+    try:
+        with p.open("rb") as f:
+            header = f.read(8)
+    except OSError:
+        return ""
+    if header[:2] == b"PK":
+        return "docx"
+    if header[:5] == b"{\\rtf":
+        return "rtf"
+    if header == _OLE2_SIGNATURE:
+        return "ole2"
+    return ""
+
+
+def _read_rtf(p: Path) -> str:
+    from striprtf.striprtf import rtf_to_text
+
+    raw = p.read_text(encoding="cp1255", errors="replace")
+    return rtf_to_text(raw)
+
+
 def read_text(path: str | Path) -> str:
     """קורא טקסט מלא מקובץ pdf/docx/txt. מחזיר מחרוזת ריקה במקרה כשל."""
     p = Path(path)
     suffix = p.suffix.lower()
     try:
-        if suffix == ".docx":
-            text = _read_docx(p)
-        elif suffix == ".doc":
-            import docx  # python-docx (לא תומך רשמית ב-.doc הישן, best-effort)
+        if suffix in (".docx", ".doc"):
+            kind = _sniff_kind(p)
+            if kind == "rtf":
+                text = _read_rtf(p)
+            elif kind == "ole2":
+                # Word בינארי ישן (OLE2) — אין כרגע דרך אמינה לחלץ טקסט
+                # ממנו; חוזרים ריק כדי שהקורא יפול ל-PDF, בדיוק כמו היום.
+                text = ""
+            elif suffix == ".docx":
+                text = _read_docx(p)
+            else:
+                import docx  # python-docx (לא תומך רשמית ב-.doc הישן, best-effort)
 
-            document = docx.Document(str(p))
-            parts = [para.text for para in document.paragraphs]
-            text = "\n".join(t for t in parts if t and t.strip())
+                document = docx.Document(str(p))
+                parts = [para.text for para in document.paragraphs]
+                text = "\n".join(t for t in parts if t and t.strip())
         elif suffix == ".pdf":
             text = _read_pdf(p)
         else:
