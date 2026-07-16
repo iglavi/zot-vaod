@@ -52,8 +52,19 @@ _ANALYZE_SCHEMA = {
                 "בלבד (שלום/מחוזי/עבודה וכו', לא העליון), אחרת ריק."
             ),
         },
+        "is_followup": {
+            "type": "boolean",
+            "description": (
+                "true אם השאלה הנוכחית היא המשך ישיר לשיחה הקודמת (מתייחסת "
+                "במשתמע לאותו נושא/מסמכים שכבר עלו, למשל 'תן דוגמה נוספת', "
+                "'תרחיב', 'מדגם רחב יותר' — בלי לפרט מחדש את הנושא) — במקרה "
+                "כזה יש לשאוב את הנושא/מונחי החיפוש מהשיחה הקודמת, לא רק "
+                "מהמשפט הנוכחי. false אם זו שאלה עצמאית בנושא חדש/אחר."
+            ),
+        },
     },
-    "required": ["search_terms", "parties", "judge", "date_from", "date_to", "court_scope"],
+    "required": ["search_terms", "parties", "judge", "date_from", "date_to",
+                 "court_scope", "is_followup"],
     "additionalProperties": False,
 }
 
@@ -81,38 +92,53 @@ def _fts_from_terms(terms: list[str]) -> str:
     return " OR ".join(f'"{t}"' for t in seen)
 
 
-def analyze_query(client, question: str, today: str | None = None) -> dict:
-    """שלב 1: הפיכת שאלה חופשית למילות חיפוש + טווח תאריכים."""
+def analyze_query(client, question: str, today: str | None = None,
+                  history: list[dict] | None = None) -> dict:
+    """שלב 1: הפיכת שאלה חופשית למילות חיפוש + טווח תאריכים.
+
+    history (אופציונלי): תורות קודמות בשיחה ({"role", "content"}), כדי
+    שהמודל יוכל לפרש נכון שאלת-המשך קצרה שאין בה מספיק הקשר בפני עצמה
+    (למשל 'תן לי דוגמה נוספת' אחרי ששאלה קודמת קבעה נושא) — בלעדי זה,
+    שלב הניתוח רואה רק את המשפט האחרון, מפיק ממנו מילות-חיפוש גנריות
+    שלא קשורות לנושא האמיתי, והאחזור נופל-בחזרה ל'המסמכים העדכניים
+    ביותר בכל המאגר' — תוצאה לא-קשורה שנראית כאילו נדגמה אקראית."""
     today = today or date.today().isoformat()
     prompt = (
         f"התאריך היום הוא {today}.\n"
-        "להלן שאלה של משתמש על פסקי דין של בתי המשפט בישראל. "
-        "חלץ ממנה מילות חיפוש בעברית לאיתור פסקי הדין הרלוונטיים, "
-        "וכן טווח תאריכים אם השאלה מתייחסת לזמן (לדוגמה: 'בשנה האחרונה', "
-        "'בחודש שעבר') — המר אותו לתאריכי YYYY-MM-DD יחסית להיום. "
-        "ציין גם court_scope אם השאלה מתייחסת ספציפית לבית המשפט העליון "
-        "(כולל בג\"ץ) או ספציפית לבתי משפט אחרים (לא העליון).\n\n"
+        "להלן שאלה של משתמש על פסקי דין של בתי המשפט בישראל, ובהמשך "
+        "לשיחה קודמת (אם קיימת למעלה). חלץ ממנה מילות חיפוש בעברית "
+        "לאיתור פסקי הדין הרלוונטיים, וכן טווח תאריכים אם השאלה מתייחסת "
+        "לזמן (לדוגמה: 'בשנה האחרונה', 'בחודש שעבר') — המר אותו לתאריכי "
+        "YYYY-MM-DD יחסית להיום. ציין גם court_scope אם השאלה מתייחסת "
+        "ספציפית לבית המשפט העליון (כולל בג\"ץ) או ספציפית לבתי משפט "
+        "אחרים (לא העליון).\n\n"
+        "אם השאלה היא המשך קצר של השיחה הקודמת (למשל 'תן דוגמה נוספת', "
+        "'הרחב', 'מדגם רחב יותר') וחסר בה הקשר עצמאי — הסק את הנושא "
+        "ומילות החיפוש מהשיחה הקודמת, וסמן is_followup=true. אחרת, "
+        "is_followup=false.\n\n"
         f"השאלה: {question}"
     )
+    messages = list(history or []) + [{"role": "user", "content": prompt}]
     try:
         resp = client.messages.create(
             model=os.environ.get("ZOT_ANALYZE_MODEL") or config.AI_ANALYZE_MODEL,
             max_tokens=600,
             output_config={"format": {"type": "json_schema", "schema": _ANALYZE_SCHEMA}},
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         )
         text = next((b.text for b in resp.content if b.type == "text"), "{}")
         data = json.loads(text)
     except Exception:
         # גיבוי: משתמשים בשאלה עצמה כמילות חיפוש
         data = {"search_terms": [question], "parties": [], "judge": "",
-                "date_from": "", "date_to": "", "court_scope": ""}
+                "date_from": "", "date_to": "", "court_scope": "", "is_followup": False}
     data.setdefault("search_terms", [])
     data.setdefault("parties", [])
     data.setdefault("judge", "")
     data.setdefault("date_from", "")
     data.setdefault("date_to", "")
     data.setdefault("court_scope", "")
+    data.setdefault("is_followup", False)
     return data
 
 

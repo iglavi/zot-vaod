@@ -409,6 +409,10 @@ def tab_ai():
     for turn in st.session_state["ai_chat"]:
         with st.chat_message("user" if turn["role"] == "user" else "assistant",
                              avatar="🙋" if turn["role"] == "user" else "⚖️"):
+            if turn["role"] == "assistant" and "is_followup" in turn:
+                st.caption("🔄 זוהתה כשאלת המשך (התבססה על השיחה הקודמת)"
+                          if turn["is_followup"] else
+                          "🆕 זוהתה כשאלה חדשה ועצמאית")
             st.markdown(turn["text"])
             if turn.get("verdicts"):
                 with st.expander(f"פסקי הדין ששימשו למענה ({len(turn['verdicts'])})"):
@@ -429,23 +433,33 @@ def tab_ai():
         st.error(f"שגיאה באתחול מנוע ה-AI: {e}")
         return
 
+    # היסטוריית שיחה קומפקטית (שאלה+תשובה בלבד, בלי הקשר פסקי-הדין המלא
+    # של תורות קודמות) — נבנית *לפני* שלב הניתוח (לא רק לפני מתן התשובה
+    # כמו קודם), כדי שגם שלב הניתוח יראה אותה. בלעדי זה, שאלת-המשך קצרה
+    # ("תן דוגמה נוספת") מגיעה לניתוח בלי שום הקשר על מה בדיוק היא ממשיכה,
+    # מפיקה מילות-חיפוש גנריות לא-קשורות, והאחזור נופל-בחזרה ל"מסמכים
+    # עדכניים בכל המאגר" — תוצאה לא-קשורה לנושא שנראית "אקראית".
+    history = [
+        {"role": "user" if t["role"] == "user" else "assistant", "content": t["text"]}
+        for t in st.session_state["ai_chat"][:-1]
+    ]
+
     with st.chat_message("assistant", avatar="⚖️"):
         with st.spinner("מנתח את השאלה ומאתר פסקי דין רלוונטיים..."):
-            analysis = ai_search.analyze_query(client, question, today=date.today().isoformat())
+            analysis = ai_search.analyze_query(client, question, today=date.today().isoformat(),
+                                               history=history)
             verdicts, total_count = safe_db_call(ai_search.retrieve, analysis)
+
+        is_followup = analysis.get("is_followup", False)
+        st.caption("🔄 זוהתה כשאלת המשך (התבססה על השיחה הקודמת)" if is_followup else
+                  "🆕 זוהתה כשאלה חדשה ועצמאית")
 
         if not verdicts:
             msg = "לא נמצאו פסקי דין רלוונטיים לשאלה זו במאגר."
             st.warning(msg)
-            st.session_state["ai_chat"].append({"role": "assistant", "text": msg, "verdicts": []})
+            st.session_state["ai_chat"].append(
+                {"role": "assistant", "text": msg, "verdicts": [], "is_followup": is_followup})
             return
-
-        # היסטוריית שיחה קומפקטית (שאלה+תשובה בלבד, בלי הקשר פסקי-הדין
-        # המלא של תורות קודמות) — כדי לאפשר שיחת המשך בעלות סבירה.
-        history = [
-            {"role": "user" if t["role"] == "user" else "assistant", "content": t["text"]}
-            for t in st.session_state["ai_chat"][:-1]
-        ]
 
         answer_box = st.empty()
         collected = []
@@ -468,7 +482,7 @@ def tab_ai():
                 render_card(v)
 
     st.session_state["ai_chat"].append(
-        {"role": "assistant", "text": answer_text, "verdicts": verdicts})
+        {"role": "assistant", "text": answer_text, "verdicts": verdicts, "is_followup": is_followup})
 
 
 # ============================ טאב משחקים לילדים ============================
