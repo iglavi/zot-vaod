@@ -9,7 +9,9 @@ import re
 from datetime import date
 from pathlib import Path
 
+from .case_types import normalize_case_type
 from .config import HEB_MONTHS
+from .court_aliases import COURT_ALIASES
 
 _MONTHS_ALT = "|".join(HEB_MONTHS)
 
@@ -689,7 +691,10 @@ def _normalize_court(raw: str) -> str:
         # גנרית לערכאה קודמת, לא שם ספציפי) — אי אפשר לדעת מהם איזה בית
         # משפט זה בפועל.
         return ""
-    return s if len(s) <= 40 and not re.search(r"\d", s) else ""
+    s = s if len(s) <= 40 and not re.search(r"\d", s) else ""
+    # תיקונים חד-פעמיים/ספציפיים מדי לכלל כללי (ראו court_aliases.py) —
+    # מוחל כשלב אחרון, אחרי כל הנרמול הכללי למעלה.
+    return COURT_ALIASES.get(s, s)
 
 
 def extract_metadata(text: str) -> dict:
@@ -716,7 +721,7 @@ def extract_metadata(text: str) -> dict:
         else:
             court = head[:m.start()].strip(" -–:")
         out["court"] = _normalize_court(court)
-        out["case_type"] = ctype
+        out["case_type"] = normalize_case_type(ctype)
         if m.group("num"):
             out["case_number"] = m.group("num").strip()
         else:

@@ -19,8 +19,9 @@ import time
 from pathlib import Path
 
 from . import config
-from .extract import (extract_decision_date, extract_judge, extract_metadata,
-                      filed_date_from_case, read_text)
+from .case_types import normalize_case_type
+from .extract import (_normalize_court, extract_decision_date, extract_judge,
+                      extract_metadata, filed_date_from_case, read_text)
 
 # חלק מהמסמכים (במיוחד PDF פגומים/חריגים, למשל תיקיית PediVerdicts בארכיון
 # העליון) גורמים ל-pdfplumber/pypdf להיתקע בפועל במקום לזרוק שגיאה — מה
@@ -356,8 +357,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
 
             _insert_verdict(conn, {
                 "case_number": case_number, "parties": cell(row, "parties"),
-                "court": cell(row, "court"), "proceeding": cell(row, "proceeding"),
-                "case_type": cell(row, "case_type"), "matter": cell(row, "matter"),
+                "court": _normalize_court(cell(row, "court")), "proceeding": cell(row, "proceeding"),
+                "case_type": normalize_case_type(cell(row, "case_type")), "matter": cell(row, "matter"),
                 "decision_type": cell(row, "decision_type"),
                 "decision_nature": cell(row, "decision_nature"),
                 "filed_date": filed, "decision_date": decision_date, "judge": judge,
