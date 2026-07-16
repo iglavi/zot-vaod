@@ -300,18 +300,32 @@ _SORT_LABELS = {"newest": "חדש ← ישן", "oldest": "ישן ← חדש", "l
 # (ראו zot/ingest.py: INDEX_SCHEMA) השאילתות עצמן כבר מהירות מאוד, אבל
 # אין סיבה לשלוף מחדש בכל rerun כשהתוכן משתנה לכל היותר פעם ביום — TTL
 # של שעה תואם את זה שכבר קיים ב-_sync_index_from_r2 למטה.
+#
+# לא משתמשים ב-safe_db_call כאן (שקורא ל-st.stop() בשגיאה): נצפה בפועל
+# בפריסה בענן שקריסה בתוך פונקציה עם st.cache_data (למשל שגיאת DB חולפת
+# תוך כדי סנכרון index.db מ-R2) גולשת כ-traceback גולמי במקום להיעצר
+# בנקיות עם ההודעה הידידותית — כנראה תלוי-גרסת Streamlit, לא נכשל
+# באותו אופן בבדיקה מקומית. לכן תופסים חריגות ישירות כאן ומחזירים
+# ברירות-מחדל בטוחות (רשימות ריקות) — שום דרך לקרוס מתוך הפונקציה הזו.
 @st.cache_data(show_spinner=False, ttl=3600)
 def _cached_simple_search_meta():
-    return (safe_db_call(search.stats),
-            [""] + safe_db_call(search.court_type_options),
-            [""] + safe_db_call(search.court_city_options),
-            [""] + safe_db_call(search.distinct_proceedings))
+    try:
+        return (True, search.stats(),
+                [""] + search.court_type_options(),
+                [""] + search.court_city_options(),
+                [""] + search.distinct_proceedings())
+    except Exception as e:  # noqa: BLE001
+        print(f"_cached_simple_search_meta: failed: {type(e).__name__}: {e}")
+        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""])
 
 
 def tab_simple():
     if not ensure_index_ui():
         return
-    s, court_types, cities, proceedings = _cached_simple_search_meta()
+    ok, s, court_types, cities, proceedings = _cached_simple_search_meta()
+    if not ok:
+        st.error("אירעה תקלה זמנית בטעינת נתוני החיפוש. נסו לרענן את הדף בעוד רגע.")
+        return
     st.caption(f"במאגר: {s['with_documents']:,} החלטות")
 
     with st.form("simple_search"):
@@ -328,7 +342,7 @@ def tab_simple():
         # (העיר לא מסתננת לפי הסוג שנבחר) — פשוט יותר, ובחירת צירוף
         # שלא קיים בפועל פשוט מחזירה 0 תוצאות, בלי סיכון.
         c5, c6 = st.columns(2)
-        court_type = c5.selectbox("סוג בית משפט", court_types,
+        court_type = c5.selectbox("בית משפט", court_types,
                                   format_func=lambda x: x or "— הכול —")
         city = c6.selectbox("עיר / מחוז", cities,
                             format_func=lambda x: x or "— הכול —")
