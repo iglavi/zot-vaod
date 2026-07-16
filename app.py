@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html as _html
+import itertools
 import os
 import re
 from datetime import date
@@ -193,6 +194,13 @@ def fmt_meta(row, terms: list[str] | None = None) -> str:
     return "".join(f"<span>{b}</span>" for b in bits)
 
 
+# מונה גלובלי למפתחות ווידג'טים ייחודיים — ראו ההערה בתוך render_card
+# להסבר המלא. מתאפס בכל הרצה-מחדש של הסקריפט (Streamlit מריץ את כל
+# הקובץ מחדש מההתחלה בכל אינטראקציה), כך שהוא תמיד מספק ערכים רצופים
+# וייחודיים בתוך אותה הרצה בודדת בלי שום מנגנון תחזוקה נוסף.
+_card_key_seq = itertools.count()
+
+
 def render_card(row, highlight_terms: list[str] | None = None):
     terms = highlight_terms or []
     parties_html = _highlight(row["parties"], terms) if row["parties"] else "—"
@@ -206,42 +214,59 @@ def render_card(row, highlight_terms: list[str] | None = None):
         f'<div class="result-meta">{fmt_meta(row, terms)}</div>'
         f'</div>', unsafe_allow_html=True)
     if row["has_document"]:
-        full = safe_db_call(search.get_verdict, row["id"])
-        approx_pages = max(1, len(full["full_text"] or "") // 2000)
-        with st.expander(f"📖 הצג את פסק הדין המלא (כ-{approx_pages} עמודים)"):
-            if full["structural_summary"]:
-                import json
-                try:
-                    summary = json.loads(full["structural_summary"])
-                except Exception:
-                    summary = {}
-                if summary:
-                    st.markdown("**🗂️ תמצית מובנית**")
-                    for key, label in SUMMARY_CATEGORIES.items():
-                        if summary.get(key):
-                            st.markdown(f"**{label}:** {summary[key]}")
-                    st.markdown("---")
-            full_text = full["full_text"] or ""
-            display_text = full_text
-            if len(full_text) > _MAX_DISPLAY_CHARS:
-                display_text = (full_text[:_MAX_DISPLAY_CHARS] +
-                                "\n\n[... הטקסט קוצר לתצוגה; הורידו את הקובץ המלא למטה ...]")
-            st.text_area("טקסט פסק הדין", value=display_text, height=300,
-                         key=f"txt_{row['id']}", label_visibility="collapsed")
-            st.download_button(
-                "⬇️ הורדה כקובץ טקסט",
-                data=full_text.encode("utf-8"),
-                file_name=f"{row['case_number'] or row['id']}.txt",
-                mime="text/plain", key=f"dl_{row['id']}")
-            if config.R2_PUBLIC_BASE_URL:
-                from urllib.parse import quote
-                c1, c2 = st.columns(2)
-                if row["file_relpath_pdf"]:
-                    url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_pdf"])
-                    c1.link_button("📄 הורדת PDF", url)
-                if row["file_relpath_docx"]:
-                    url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_docx"])
-                    c2.link_button("📝 הורדת Word", url)
+        # מפתח ייחודי גלובלית לעמוד כולו, לא רק row['id']: אותו פסק דין
+        # יכול להופיע יותר מפעם אחת על אותו עמוד בפועל — למשל בשני תורות
+        # שונות של שיחת ה-AI (כל תור מציג את פסקי הדין שלו בהרחבה נפרדת),
+        # או אם קישור ישיר (?verdict=) מציג פסק דין שמופיע גם בתוצאות
+        # חיפוש למטה. מפתחות Streamlit חייבים להיות ייחודיים על כל העמוד,
+        # לא רק בתוך widget יחיד — התנגשות (כפי שקרה בפועל למשתמש: אותו
+        # מסמך הופיע בשני תורות AI שונות) הקריסה את כל האפליקציה עם
+        # StreamlitDuplicateElementKey. עוטפים גם ב-try/except כדי שכל
+        # תקלת-תצוגה עתידית אחרת (לא רק זו) תיכשל בכרטיס בודד ולא בעמוד
+        # כולו — המשתמש רואה הודעה ידידותית, והשגיאה המלאה נכתבת ליומן
+        # השרת (שרק המפתח רואה, לא המשתמש).
+        card_key = next(_card_key_seq)
+        try:
+            full = safe_db_call(search.get_verdict, row["id"])
+            approx_pages = max(1, len(full["full_text"] or "") // 2000)
+            with st.expander(f"📖 הצג את פסק הדין המלא (כ-{approx_pages} עמודים)"):
+                if full["structural_summary"]:
+                    import json
+                    try:
+                        summary = json.loads(full["structural_summary"])
+                    except Exception:
+                        summary = {}
+                    if summary:
+                        st.markdown("**🗂️ תמצית מובנית**")
+                        for key, label in SUMMARY_CATEGORIES.items():
+                            if summary.get(key):
+                                st.markdown(f"**{label}:** {summary[key]}")
+                        st.markdown("---")
+                full_text = full["full_text"] or ""
+                display_text = full_text
+                if len(full_text) > _MAX_DISPLAY_CHARS:
+                    display_text = (full_text[:_MAX_DISPLAY_CHARS] +
+                                    "\n\n[... הטקסט קוצר לתצוגה; הורידו את הקובץ המלא למטה ...]")
+                st.text_area("טקסט פסק הדין", value=display_text, height=300,
+                             key=f"txt_{card_key}", label_visibility="collapsed")
+                st.download_button(
+                    "⬇️ הורדה כקובץ טקסט",
+                    data=full_text.encode("utf-8"),
+                    file_name=f"{row['case_number'] or row['id']}.txt",
+                    mime="text/plain", key=f"dl_{card_key}")
+                if config.R2_PUBLIC_BASE_URL:
+                    from urllib.parse import quote
+                    c1, c2 = st.columns(2)
+                    if row["file_relpath_pdf"]:
+                        url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_pdf"])
+                        c1.link_button("📄 הורדת PDF", url, key=f"pdf_{card_key}")
+                    if row["file_relpath_docx"]:
+                        url = config.R2_PUBLIC_BASE_URL + "/" + quote(row["file_relpath_docx"])
+                        c2.link_button("📝 הורדת Word", url, key=f"docx_{card_key}")
+        except Exception as e:  # noqa: BLE001
+            print(f"render_card: failed to render verdict id={row['id']}: "
+                  f"{type(e).__name__}: {e}")
+            st.caption("⚠️ אירעה תקלה בהצגת פסק הדין המלא. פרטי התיק שלמעלה עדיין תקינים.")
     else:
         st.caption("ℹ️ קובץ פסק הדין המלא אינו זמין במאגר המקומי (קיימים רק פרטי המטא-דאטה).")
 
