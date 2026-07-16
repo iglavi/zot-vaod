@@ -58,8 +58,86 @@ _SORT_SQL = {
     "longest": "length(full_text) DESC, id DESC",
 }
 
+# מפצל את השדה הטקסטואלי-מלא court (המשמש להצגה, ולא משתנה) לשני ממדי
+# סינון נפרדים — סוג ("ערכאה") ועיר/מחוז ("יישוב") — התואמים למבנה
+# הסינון של נבו (nevo.co.il): שם בית המשפט לבדו מערבב "מהו בית המשפט"
+# עם "היכן הוא" לתפריט סינון אחד מבלבל. לא שדה DB נפרד: נגזר מ-court
+# בזמן שאילתה, כך שתיקון עתידי יחיד ב-_normalize_court (ראו extract.py)
+# ממשיך להזין את שני הממדים בלי סנכרון כפול. הסדר קובע: תבניות ספציפיות
+# יותר (כמו 'לעניינים מנהליים') חייבות להיבדק *לפני* תבניות כלליות יותר
+# שעלולות להתאים חלקית לאותה מחרוזת.
+_COURT_TYPE_PATTERNS = [
+    ("עליון", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+העליון$")),
+    ("מחוזי", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+המחוזי\s+ב?(.+)$")),
+    ("עבודה", re.compile(r"^בית\s*[-–]?\s*ה?דין\s+ה?(?:אזורי|ארצי)\s+לעבודה\s*(.*)$")),
+    ("תעבורה", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+לתעבורה\s+(?:במחוז\s+|מחוז\s+|ב)(.+)$")),
+    ("מנהלי", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+לעניינים\s+מ[יי]?נהליים\s+ב(.+)$")),
+    ("משפחה", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+לענייני\s+משפחה\s+ב(.+)$")),
+    ("עניינים מקומיים", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+לעניינים\s+מקומיים\s+ב(.+)$")),
+    ("תביעות קטנות", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+לתביעות\s+קטנות\s+ב(.+)$")),
+    ("שלום", re.compile(r"^בית\s*[-–]?\s*ה?משפט\s+השלום\s+ב(.+)$")),
+    ("בית הדין לענייני מים", re.compile(r"^בית\s+הדין\s+לענייני\s+מים\s+ב(.+)$")),
+    ("בית המשפט לימאות", re.compile(r"^בית\s+המשפט\s+לימאות\s+ב(.+)$")),
+    ("בית דין לשכירות", re.compile(r"^בית\s+דין\s+לשכירות\s+ב(.+)$")),
+]
 
-def simple_search(*, name: str = "", judge: str = "", court: str = "",
+
+def split_court(court: str) -> tuple[str, str]:
+    """מפצל שם בית משפט קנוני (court) ל(סוג, עיר/מחוז). מוסדות ייחודיים
+    בודדים שאין להם עוד דוגמה במאגר (ועדות ערר, צבאי מנהלי וכד') מוחזרים
+    כמו שהם כ'סוג' בלי עיר — הכינוי המלא שלהם הוא-הוא הסוג היחיד שלהם."""
+    s = (court or "").strip()
+    if not s:
+        return "", ""
+    for type_name, pat in _COURT_TYPE_PATTERNS:
+        m = pat.match(s)
+        if m:
+            city = m.group(1).strip() if m.groups() else ""
+            return type_name, city
+    return s, ""
+
+
+def court_type_options(db_path: Path | None = None) -> list[str]:
+    """סוגי בית המשפט ('ערכאה') שקיימים בפועל במאגר, למיון בתפריט
+    הסינון — לא כל 13 הסוגים תמיד קיימים (תלוי בהרכב הארכיון)."""
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    conn.close()
+    types = {split_court(r[0])[0] for r in rows}
+    return sorted(types)
+
+
+def court_city_options(court_type: str = "", db_path: Path | None = None) -> list[str]:
+    """ערים/מחוזות ('יישוב') שקיימים בפועל במאגר — אם court_type ניתן,
+    רק הערים שיש להן בית משפט מהסוג הזה (למניעת רשימת ערים שלא רלוונטיות
+    לסוג שכבר נבחר בתפריט השני)."""
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    conn.close()
+    cities = set()
+    for (court,) in rows:
+        t, city = split_court(court)
+        if city and (not court_type or t == court_type):
+            cities.add(city)
+    return sorted(cities)
+
+
+def _courts_matching(court_type: str, city: str, db_path: Path | None = None) -> list[str]:
+    """מחזיר את כל מחרוזות court הקיימות שתואמות את (סוג, עיר) שנבחרו —
+    כדי לבנות סינון 'court IN (...)' בלי לשמור סוג/עיר כעמודות DB
+    נפרדות (ראו split_court)."""
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    conn.close()
+    matches = []
+    for (court,) in rows:
+        t, c = split_court(court)
+        if (not court_type or t == court_type) and (not city or c == city):
+            matches.append(court)
+    return matches
+
+
+def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city: str = "",
                   case_number: str = "", free_text: str = "", match_mode: str = "any",
                   proceeding: str = "", date_from: str = "", date_to: str = "",
                   sort: str = "newest",
@@ -76,9 +154,16 @@ def simple_search(*, name: str = "", judge: str = "", court: str = "",
     if judge:
         where.append("judge LIKE ?")
         params.append(f"%{judge.strip()}%")
-    if court:
-        where.append("court LIKE ?")
-        params.append(f"%{court.strip()}%")
+    if court_type or city:
+        # 'court' עצמו נשאר תיאורי-מלא (לתצוגה) — סוג ועיר הם ממדים
+        # נגזרים (ראו split_court), אז מסננים לפי רשימת ערכי court
+        # שתואמים, לא לפי עמודה נפרדת ב-DB.
+        matching = _courts_matching(court_type, city, db_path)
+        if not matching:
+            matching = ["\0no_match\0"]  # לא קיים אף בית משפט מהצירוף הזה — 0 תוצאות בבטחה
+        placeholders = ",".join("?" * len(matching))
+        where.append(f"court IN ({placeholders})")
+        params.extend(matching)
     if case_number:
         where.append("case_number LIKE ?")
         params.append(f"%{case_number.strip()}%")
@@ -190,15 +275,6 @@ def landmark_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
     ).fetchone()
     conn.close()
     return row
-
-
-def distinct_courts(db_path: Path | None = None) -> list[str]:
-    conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT DISTINCT court FROM verdicts WHERE court != '' ORDER BY court"
-    ).fetchall()
-    conn.close()
-    return [r[0] for r in rows]
 
 
 def distinct_proceedings(db_path: Path | None = None) -> list[str]:

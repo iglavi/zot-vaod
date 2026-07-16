@@ -303,14 +303,15 @@ _SORT_LABELS = {"newest": "חדש ← ישן", "oldest": "ישן ← חדש", "l
 @st.cache_data(show_spinner=False, ttl=3600)
 def _cached_simple_search_meta():
     return (safe_db_call(search.stats),
-            [""] + safe_db_call(search.distinct_courts),
+            [""] + safe_db_call(search.court_type_options),
+            [""] + safe_db_call(search.court_city_options),
             [""] + safe_db_call(search.distinct_proceedings))
 
 
 def tab_simple():
     if not ensure_index_ui():
         return
-    s, courts, proceedings = _cached_simple_search_meta()
+    s, court_types, cities, proceedings = _cached_simple_search_meta()
     st.caption(f"במאגר: {s['with_documents']:,} החלטות")
 
     with st.form("simple_search"):
@@ -319,12 +320,19 @@ def tab_simple():
         case_number = c2.text_input("מספר תיק", placeholder="למשל: 4934-07-24")
         c3, c4 = st.columns(2)
         judge = c3.text_input("שם שופט/ת", placeholder="למשל: רוני סלע")
-        court = c4.selectbox("בית משפט", courts,
-                             format_func=lambda x: x or "— הכול —")
-        c5, c6 = st.columns(2)
-        proceeding = c5.selectbox("סוג הליך", proceedings,
+        proceeding = c4.selectbox("סוג הליך", proceedings,
                                   format_func=lambda x: x or "— הכול —")
-        free_text = c6.text_input("חיפוש חופשי בטקסט", placeholder="מילים בגוף פסק הדין")
+        # שני תפריטים נפרדים ("ערכאה" ו"יישוב"), כמו בסינון של נבו —
+        # במקום תפריט "בית משפט" יחיד שמערבב את שני הממדים לרשימה ארוכה
+        # ומבלבלת (ראו search.split_court). לא מצטלבים דינמית זה עם זה
+        # (העיר לא מסתננת לפי הסוג שנבחר) — פשוט יותר, ובחירת צירוף
+        # שלא קיים בפועל פשוט מחזירה 0 תוצאות, בלי סיכון.
+        c5, c6 = st.columns(2)
+        court_type = c5.selectbox("סוג בית משפט", court_types,
+                                  format_func=lambda x: x or "— הכול —")
+        city = c6.selectbox("עיר / מחוז", cities,
+                            format_func=lambda x: x or "— הכול —")
+        free_text = st.text_input("חיפוש חופשי בטקסט", placeholder="מילים בגוף פסק הדין")
         match_mode = st.radio("סוג ההתאמה לחיפוש החופשי", list(_MATCH_MODE_LABELS),
                               format_func=lambda x: _MATCH_MODE_LABELS[x],
                               horizontal=True, index=0)
@@ -336,7 +344,8 @@ def tab_simple():
     if submitted:
         st.session_state["simple_page"] = 0
         st.session_state["simple_query"] = dict(
-            name=name, case_number=case_number, judge=judge, court=court,
+            name=name, case_number=case_number, judge=judge,
+            court_type=court_type, city=city,
             proceeding=proceeding, free_text=free_text, match_mode=match_mode,
             date_from=date_from.isoformat() if date_from else "",
             date_to=date_to.isoformat() if date_to else "")
@@ -363,7 +372,7 @@ def tab_simple():
     pages = (total - 1) // per + 1
     st.markdown(f'<div class="page-info">נמצאו <b>{total}</b> תיקים — '
                 f'עמוד {page + 1} מתוך {pages}</div>', unsafe_allow_html=True)
-    highlight_terms = [query["name"], query["judge"], query["court"], query["free_text"]]
+    highlight_terms = [query["name"], query["judge"], query["city"], query["free_text"]]
     for row in rows:
         render_card(row, highlight_terms)
 
