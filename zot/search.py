@@ -34,7 +34,7 @@ _TOKEN_RE = re.compile(r"[\w֐-׿]+", flags=re.UNICODE)
 #   near   — המילים קרובות זו לזו בטקסט (FTS5 NEAR, מרחק 6 מילים)
 MATCH_MODES = ("any", "exact", "near")
 
-SORT_OPTIONS = ("newest", "oldest", "longest")
+SORT_OPTIONS = ("relevance", "newest", "oldest", "longest")
 
 
 def _fts_query(text: str, mode: str = "any") -> str:
@@ -52,11 +52,32 @@ def _fts_query(text: str, mode: str = "any") -> str:
     return " OR ".join(f'"{t}"' for t in tokens)
 
 
+# מיון 'רלוונטיות' (ברירת המחדל): פסק דין/גזר דין/הכרעת דין (תוכן מהותי)
+# לפני החלטה סתמית, ואז טקסט ארוך לפני קצר — בהנחה שרוב המשתמשים מחפשים
+# פסקי דין משמעותיים ולא החלטות ביניים קצרות. כשיש גם חיפוש חופשי בטקסט,
+# איכות ההתאמה (bm25, ראו _order_sql) קודמת לזה — ראו שם למה.
+_RELEVANCE_TYPE_CASE = (
+    "CASE WHEN verdicts.decision_type IN ('פסק דין', 'גזר דין', 'הכרעת דין') "
+    "THEN 0 ELSE 1 END"
+)
+
 _SORT_SQL = {
-    "newest": "COALESCE(NULLIF(decision_date,''), filed_date) DESC, id DESC",
-    "oldest": "COALESCE(NULLIF(decision_date,''), filed_date) ASC, id ASC",
-    "longest": "length(full_text) DESC, id DESC",
+    "relevance": f"{_RELEVANCE_TYPE_CASE}, length(verdicts.full_text) DESC, verdicts.id DESC",
+    "newest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) DESC, verdicts.id DESC",
+    "oldest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) ASC, verdicts.id ASC",
+    "longest": "length(verdicts.full_text) DESC, verdicts.id DESC",
 }
+
+
+def _order_sql(sort: str, use_bm25: bool) -> str:
+    """בונה את ביטוי ה-ORDER BY. כשיש גם חיפוש חופשי בטקסט וגם מיון
+    לפי 'רלוונטיות', bm25 (איכות ההתאמה למילות החיפוש) קודם לסוג
+    המסמך/אורך הטקסט — מי שהקליד מילות חיפוש כנראה מתעניין בהתאמה
+    הטובה ביותר להן, לא רק ב'פסק דין ארוך כלשהו'."""
+    base = _SORT_SQL.get(sort, _SORT_SQL["relevance"])
+    if use_bm25 and sort == "relevance":
+        return f"bm25(verdicts_fts), {base}"
+    return base
 
 # מפצל את השדה הטקסטואלי-מלא court (המשמש להצגה, ולא משתנה) לשני ממדי
 # סינון נפרדים — סוג ("ערכאה") ועיר/מחוז ("יישוב") — התואמים למבנה
@@ -140,7 +161,7 @@ def _courts_matching(court_type: str, city: str, db_path: Path | None = None) ->
 def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city: str = "",
                   case_number: str = "", free_text: str = "", match_mode: str = "any",
                   proceeding: str = "", date_from: str = "", date_to: str = "",
-                  sort: str = "newest",
+                  sort: str = "relevance",
                   limit: int = config.RESULTS_PER_PAGE, offset: int = 0,
                   db_path: Path | None = None) -> tuple[list[sqlite3.Row], int]:
     """חיפוש לפי שדות מובנים. מחזיר (רשומות בעמוד, סך הכל)."""
@@ -149,10 +170,10 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     params: list = []
 
     if name:
-        where.append("parties LIKE ?")
+        where.append("verdicts.parties LIKE ?")
         params.append(f"%{name.strip()}%")
     if judge:
-        where.append("judge LIKE ?")
+        where.append("verdicts.judge LIKE ?")
         params.append(f"%{judge.strip()}%")
     if court_type or city:
         # 'court' עצמו נשאר תיאורי-מלא (לתצוגה) — סוג ועיר הם ממדים
@@ -162,33 +183,43 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         if not matching:
             matching = ["\0no_match\0"]  # לא קיים אף בית משפט מהצירוף הזה — 0 תוצאות בבטחה
         placeholders = ",".join("?" * len(matching))
-        where.append(f"court IN ({placeholders})")
+        where.append(f"verdicts.court IN ({placeholders})")
         params.extend(matching)
     if case_number:
-        where.append("case_number LIKE ?")
+        where.append("verdicts.case_number LIKE ?")
         params.append(f"%{case_number.strip()}%")
     if proceeding:
-        where.append("proceeding = ?")
+        where.append("verdicts.proceeding = ?")
         params.append(proceeding.strip())
     if date_from:
-        where.append("COALESCE(NULLIF(decision_date,''), filed_date) >= ?")
+        where.append("COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) >= ?")
         params.append(date_from)
     if date_to:
-        where.append("COALESCE(NULLIF(decision_date,''), filed_date) <= ?")
+        where.append("COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) <= ?")
         params.append(date_to)
 
+    # כשיש חיפוש חופשי בטקסט וגם מיון 'רלוונטיות', מצטרפים ל-verdicts_fts
+    # (JOIN, לא subquery) כדי ש-bm25() יהיה זמין למיון — פונקציית bm25 של
+    # FTS5 דורשת שהטבלה הוירטואלית תהיה נתונה ל-MATCH באותה שאילתה עצמה,
+    # לא בתת-שאילתה נפרדת. בכל מקרה אחר (אין חיפוש חופשי, או שנבחר מיון
+    # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר.
     fts = _fts_query(free_text, match_mode)
+    use_bm25 = bool(fts) and sort == "relevance"
     if fts:
-        where.append("id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+        if use_bm25:
+            where.append("verdicts_fts MATCH ?")
+        else:
+            where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
         params.append(fts)
 
+    from_clause = "verdicts JOIN verdicts_fts ON verdicts_fts.rowid = verdicts.id" if use_bm25 else "verdicts"
     clause = (" WHERE " + " AND ".join(where)) if where else ""
-    cols = ", ".join(_FIELDS)
-    order = _SORT_SQL.get(sort, _SORT_SQL["newest"])
+    cols = ", ".join(f"verdicts.{f}" for f in _FIELDS)
+    order = _order_sql(sort, use_bm25)
 
-    total = conn.execute(f"SELECT COUNT(*) FROM verdicts{clause}", params).fetchone()[0]
+    total = conn.execute(f"SELECT COUNT(*) FROM {from_clause}{clause}", params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT {cols} FROM verdicts{clause} "
+        f"SELECT {cols} FROM {from_clause}{clause} "
         f"ORDER BY {order} "
         f"LIMIT ? OFFSET ?",
         params + [limit, offset],
