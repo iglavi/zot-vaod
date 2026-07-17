@@ -180,6 +180,18 @@ def upload_index(local_path: Path | None = None, verbose: bool = True) -> dict:
                 client.upload_file(str(upload_path), config.R2_BUCKET, INDEX_KEY)
                 if verbose:
                     print(f"האינדקס ({upload_path.stat().st_size / 1e6:.1f}MB) הועלה ל-R2.")
+                # מעדכנים את סמן ה-ETag המקומי (ראו sync_index) גם כאן, לא
+                # רק אחרי הורדה: בלעדי זה, הרצת sync_index על אותה מכונה
+                # אחרי העלאה (למשל בדיקה מקומית של האתר) רואה ETag מרוחק
+                # חדש מול סמן מקומי ישן-מהעלאה-הקודמת, ומורידה מ-R2 את מה
+                # שהיא-עצמה בדיוק העלתה — בזבוז זמן/רוחב-פס בלבד, אך גם
+                # חלון-הזדמנות לקריאה חלקית אם הבדיקה המקומית רצה תוך כדי.
+                try:
+                    new_etag = client.head_object(Bucket=config.R2_BUCKET, Key=INDEX_KEY)["ETag"]
+                    marker = local_path.parent / f".{local_path.name}.synced_etag"
+                    marker.write_text(new_etag, encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass  # לא קריטי - sync_index פשוט יוריד שוב בפעם הבאה
                 return {"configured": True}
             except Exception as e:  # noqa: BLE001
                 last_err = e
