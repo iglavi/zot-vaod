@@ -314,16 +314,17 @@ def _cached_simple_search_meta():
         return (True, search.stats(),
                 [""] + search.court_type_options(),
                 [""] + search.court_city_options(),
-                [""] + search.distinct_proceedings())
+                [""] + search.distinct_proceedings(),
+                [""] + search.distinct_case_types())
     except Exception as e:  # noqa: BLE001
         print(f"_cached_simple_search_meta: failed: {type(e).__name__}: {e}")
-        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""])
+        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""], [""])
 
 
 def tab_simple():
     if not ensure_index_ui():
         return
-    ok, s, court_types, cities, proceedings = _cached_simple_search_meta()
+    ok, s, court_types, cities, proceedings, case_types = _cached_simple_search_meta()
     if not ok:
         st.error("אירעה תקלה זמנית בטעינת נתוני החיפוש. נסו לרענן את הדף בעוד רגע.")
         return
@@ -347,6 +348,11 @@ def tab_simple():
                                   format_func=lambda x: x or "— הכול —")
         city = c6.selectbox("עיר / מחוז", cities,
                             format_func=lambda x: x or "— הכול —")
+        # 'סוג עניין' (case_type) — רשימת נבו (ראו zot/case_types.py), אבל
+        # התפריט עצמו דינמי: רק קודים שיש להם בפועל החלטה במאגר, גדל מעצמו
+        # כשמופיע קוד חדש (לא הרשימה הסטטית המלאה של ~370 הקודים).
+        case_type = st.selectbox("סוג עניין", case_types,
+                                 format_func=lambda x: x or "— הכול —")
         free_text = st.text_input("חיפוש חופשי בטקסט", placeholder="מילים בגוף פסק הדין")
         match_mode = st.radio("סוג ההתאמה לחיפוש החופשי", list(_MATCH_MODE_LABELS),
                               format_func=lambda x: _MATCH_MODE_LABELS[x],
@@ -361,7 +367,8 @@ def tab_simple():
         st.session_state["simple_query"] = dict(
             name=name, case_number=case_number, judge=judge,
             court_type=court_type, city=city,
-            proceeding=proceeding, free_text=free_text, match_mode=match_mode,
+            proceeding=proceeding, case_type=case_type,
+            free_text=free_text, match_mode=match_mode,
             date_from=date_from.isoformat() if date_from else "",
             date_to=date_to.isoformat() if date_to else "")
 

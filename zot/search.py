@@ -160,7 +160,7 @@ def _courts_matching(court_type: str, city: str, db_path: Path | None = None) ->
 
 def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city: str = "",
                   case_number: str = "", free_text: str = "", match_mode: str = "any",
-                  proceeding: str = "", date_from: str = "", date_to: str = "",
+                  proceeding: str = "", case_type: str = "", date_from: str = "", date_to: str = "",
                   sort: str = "relevance",
                   limit: int = config.RESULTS_PER_PAGE, offset: int = 0,
                   db_path: Path | None = None) -> tuple[list[sqlite3.Row], int]:
@@ -191,6 +191,9 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     if proceeding:
         where.append("verdicts.proceeding = ?")
         params.append(proceeding.strip())
+    if case_type:
+        where.append("verdicts.case_type = ?")
+        params.append(case_type.strip())
     if date_from:
         where.append("COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) >= ?")
         params.append(date_from)
@@ -312,6 +315,18 @@ def distinct_proceedings(db_path: Path | None = None) -> list[str]:
     conn = get_conn(db_path)
     rows = conn.execute(
         "SELECT DISTINCT proceeding FROM verdicts WHERE proceeding != '' ORDER BY proceeding"
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def distinct_case_types(db_path: Path | None = None) -> list[str]:
+    """סוגי-הליך ('סוג עניין', ראו zot/case_types.py) שקיימים בפועל
+    במאגר — לא כל ~370 הקודים ברשימת נבו תמיד קיימים (תלוי בהרכב
+    הארכיון), אז התפריט גדל בעצמו ברגע שמופיע קוד חדש."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT DISTINCT case_type FROM verdicts WHERE case_type != '' ORDER BY case_type"
     ).fetchall()
     conn.close()
     return [r[0] for r in rows]
