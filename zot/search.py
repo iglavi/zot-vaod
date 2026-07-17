@@ -166,7 +166,11 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
                   db_path: Path | None = None) -> tuple[list[sqlite3.Row], int]:
     """חיפוש לפי שדות מובנים. מחזיר (רשומות בעמוד, סך הכל)."""
     conn = get_conn(db_path)
-    where: list[str] = []
+    # מסננים תמיד רק רשומות עם טקסט מלא זמין: רשומת מטא-דאטה בלבד (בעיקר
+    # פסקי דין ישנים של העליון, מלפני שהופצו כקבצים מלאים) אין למשתמש
+    # מה לעשות איתה בתוצאות חיפוש — היא רק מטרידה ("קובץ פסק הדין המלא
+    # אינו זמין"), לא תוצאה שימושית.
+    where: list[str] = ["verdicts.has_document = 1"]
     params: list = []
 
     if name:
