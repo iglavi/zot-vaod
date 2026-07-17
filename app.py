@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import html as _html
-import itertools
 import os
 import re
 from datetime import date
@@ -193,39 +192,37 @@ def fmt_meta(row, terms: list[str] | None = None) -> str:
         bits.append(f"📄 {_esc(row['decision_type'])}")
     return "".join(f"<span>{b}</span>" for b in bits)
 
-
-# מונה גלובלי למפתחות ווידג'טים ייחודיים — ראו ההערה בתוך render_card
-# להסבר המלא. מתאפס בכל הרצה-מחדש של הסקריפט (Streamlit מריץ את כל
-# הקובץ מחדש מההתחלה בכל אינטראקציה), כך שהוא תמיד מספק ערכים רצופים
-# וייחודיים בתוך אותה הרצה בודדת בלי שום מנגנון תחזוקה נוסף.
-_card_key_seq = itertools.count()
-
-
-def render_card(row, highlight_terms: list[str] | None = None):
+def render_card(row, highlight_terms: list[str] | None = None, key_prefix: str = "card"):
     terms = highlight_terms or []
     parties_html = _highlight(row["parties"], terms) if row["parties"] else "—"
     st.markdown(
         f'<div class="result-card">'
         f'<div class="result-number">'
-        f'<span>תיק מס\' {_esc(row["case_number"])}</span>'
+        f'<span>{_esc(row["case_number"])}</span>'
         f'<a href="?verdict={row["id"]}" style="color:var(--caramel);">🔗</a>'
         f'</div>'
         f'<div class="result-name">{parties_html}</div>'
         f'<div class="result-meta">{fmt_meta(row, terms)}</div>'
         f'</div>', unsafe_allow_html=True)
     if row["has_document"]:
-        # מפתח ייחודי גלובלית לעמוד כולו, לא רק row['id']: אותו פסק דין
-        # יכול להופיע יותר מפעם אחת על אותו עמוד בפועל — למשל בשני תורות
-        # שונות של שיחת ה-AI (כל תור מציג את פסקי הדין שלו בהרחבה נפרדת),
-        # או אם קישור ישיר (?verdict=) מציג פסק דין שמופיע גם בתוצאות
-        # חיפוש למטה. מפתחות Streamlit חייבים להיות ייחודיים על כל העמוד,
-        # לא רק בתוך widget יחיד — התנגשות (כפי שקרה בפועל למשתמש: אותו
-        # מסמך הופיע בשני תורות AI שונות) הקריסה את כל האפליקציה עם
-        # StreamlitDuplicateElementKey. עוטפים גם ב-try/except כדי שכל
-        # תקלת-תצוגה עתידית אחרת (לא רק זו) תיכשל בכרטיס בודד ולא בעמוד
-        # כולו — המשתמש רואה הודעה ידידותית, והשגיאה המלאה נכתבת ליומן
-        # השרת (שרק המפתח רואה, לא המשתמש).
-        card_key = next(_card_key_seq)
+        # מפתח שמשלב מזהה-הקריאה (key_prefix, ייחודי לכל אחד מנקודות
+        # הקריאה ל-render_card - חיפוש רגיל/תור-AI ספציפי/קישור ישיר/וכו')
+        # עם row['id'] עצמו. חובה את שניהם:
+        #   - רק row['id'] לא מספיק: אותו פסק דין יכול להופיע יותר מפעם
+        #     אחת על אותו עמוד (שני תורות AI שונים שמצטטים אותו מסמך) —
+        #     בלעדי key_prefix זו בדיוק ה-StreamlitDuplicateElementKey
+        #     שקרסה בפועל למשתמש.
+        #   - רק מונה-מיקום גלובלי (הגרסה הקודמת) גם לא מספיק, וגרוע יותר
+        #     בפועל: Streamlit משמר את ה-state של widget לפי key בין
+        #     rerun-ים (למשל מיון/דפדוף/חיפוש חדש) — עם key שתלוי רק
+        #     במיקום-בעמוד ולא בזהות הפסק-דין, כרטיס חדש שנופל על אותו
+        #     מיקום מקבל את אותו key וממשיך להציג את הטקסט/פרטים של הפסק-
+        #     דין ה*קודם* שהיה שם (state ישן), למרות ש-value שהועבר
+        #     בקריאה הנוכחית שונה — בדיוק התקלה שדווחה בפועל (תצוגה
+        #     מקדימה עם שופט/טקסט לא-קשורים לכרטיס שמעליה). שילוב עם
+        #     row['id'] פותר את זה: כרטיס חדש עם id חדש מקבל key חדש
+        #     שלא נראה בעבר, ולכן בהכרח משתמש ב-value הנוכחי.
+        card_key = f"{key_prefix}_{row['id']}"
         try:
             full = safe_db_call(search.get_verdict, row["id"])
             approx_pages = max(1, len(full["full_text"] or "") // 2000)
@@ -285,7 +282,7 @@ def _direct_verdict_link_ui():
         st.warning("פסק הדין המבוקש לא נמצא.")
         return
     st.markdown("#### 🔗 פסק דין לפי קישור ישיר")
-    render_card(row)
+    render_card(row, key_prefix="direct")
     st.markdown("---")
 
 
@@ -396,7 +393,7 @@ def tab_simple():
                 f'עמוד {page + 1} מתוך {pages}</div>', unsafe_allow_html=True)
     highlight_terms = [query["name"], query["judge"], query["city"], query["free_text"]]
     for row in rows:
-        render_card(row, highlight_terms)
+        render_card(row, highlight_terms, key_prefix="simple")
 
     if pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
@@ -437,7 +434,7 @@ def tab_ai():
         st.caption("שאלו שאלה בשפה חופשית על פסקי הדין במאגר. אפשר גם לשאול שאלות המשך.")
         st.caption("דוגמאות: " + "  •  ".join(EXAMPLES))
 
-    for turn in st.session_state["ai_chat"]:
+    for turn_idx, turn in enumerate(st.session_state["ai_chat"]):
         with st.chat_message("user" if turn["role"] == "user" else "assistant",
                              avatar="🙋" if turn["role"] == "user" else "⚖️"):
             if turn["role"] == "assistant" and "is_followup" in turn:
@@ -448,7 +445,7 @@ def tab_ai():
             if turn.get("verdicts"):
                 with st.expander(f"פסקי הדין ששימשו למענה ({len(turn['verdicts'])})"):
                     for v in turn["verdicts"]:
-                        render_card(v)
+                        render_card(v, key_prefix=f"aihist{turn_idx}")
 
     question = st.chat_input("שאלו שאלה על פסקי הדין... (Enter לשליחה, Shift+Enter לשורה חדשה)")
     if not question:
@@ -510,7 +507,7 @@ def tab_ai():
         answer_text = "".join(collected)
         with st.expander(f"פסקי הדין ששימשו למענה ({len(verdicts)})"):
             for v in verdicts:
-                render_card(v)
+                render_card(v, key_prefix="aicur")
 
     st.session_state["ai_chat"].append(
         {"role": "assistant", "text": answer_text, "verdicts": verdicts, "is_followup": is_followup})
@@ -556,7 +553,7 @@ def tab_games():
     if row is None:
         st.warning("לא נמצא פסק דין מתאים הפעם — נסו שוב.")
         return
-    render_card(row)
+    render_card(row, key_prefix="games")
 
 
 # ============================ טאב אודות ============================
