@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from . import config, storage
-from .case_types import normalize_case_type
+from .case_types import normalize_case_type, proceeding_for_case_type
 from .extract import (_normalize_court, extract_decision_date, extract_judge,
                       extract_metadata, filed_date_from_case, read_text)
 
@@ -143,6 +143,18 @@ CREATE INDEX IF NOT EXISTS idx_verdicts_effdate ON verdicts(COALESCE(NULLIF(deci
 CREATE INDEX IF NOT EXISTS idx_verdicts_hasdoc_effdate ON verdicts(has_document, COALESCE(NULLIF(decision_date,''), filed_date));
 CREATE INDEX IF NOT EXISTS idx_verdicts_relpath ON verdicts(file_relpath);
 CREATE INDEX IF NOT EXISTS idx_verdicts_decision_type ON verdicts(decision_type);
+CREATE INDEX IF NOT EXISTS idx_verdicts_case_type ON verdicts(case_type);
+-- מיון ברירת המחדל ('רלוונטיות', ראו search._RELEVANCE_TYPE_CASE) וגם
+-- 'לפי אורך טקסט' דורשים מיון על-פני כל הטבלה בלי אינדקס תואם - במיוחד
+-- חמור מול Turso (אין ANALYZE, ראו README.md): נמדד בפועל 4.4 שניות
+-- וסריקה כפולה (~1.35M שורות) עבור עמוד תוצאות ראשון בודד. עם האינדקסים
+-- האלה: 8ms. אינדקס-ביטוי (CASE בתוך CREATE INDEX) - נתמך גם ב-Turso.
+CREATE INDEX IF NOT EXISTS idx_verdicts_relevance ON verdicts(
+    has_document,
+    (CASE WHEN decision_type IN ('פסק דין', 'גזר דין', 'הכרעת דין') THEN 0 ELSE 1 END),
+    text_length DESC, id DESC
+);
+CREATE INDEX IF NOT EXISTS idx_verdicts_hasdoc_textlen ON verdicts(has_document, text_length DESC, id DESC);
 """
 
 # מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה (בין אם מלאה או אינקרementלית),
@@ -241,6 +253,12 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
     full_text = values.get("full_text", "")
     row_values = dict(values)
     row_values["text_length"] = len(full_text)
+    # proceeding ('סוג הליך') מגיע רק מעמודת ה-CSV המקורית - ריק כמעט
+    # תמיד עבור מסמכים שלא כוסו בה (הורדות יומיות, ארכיון העליון). ממלאים
+    # אותו מ-case_type כשידוע מיפוי אמין (ראו case_types.py:
+    # PROCEEDING_BY_CASE_TYPE) - לא דורסים ערך אמיתי שכבר קיים.
+    if not row_values.get("proceeding"):
+        row_values["proceeding"] = proceeding_for_case_type(row_values.get("case_type", ""))
     placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
     cur = conn.execute(
         f"INSERT INTO verdicts ({','.join(_VERDICT_COLUMNS)}) VALUES ({placeholders})",

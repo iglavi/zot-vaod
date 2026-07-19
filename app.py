@@ -394,30 +394,40 @@ def tab_simple():
 
     page = st.session_state.get("simple_page", 0)
     per = config.RESULTS_PER_PAGE
-    rows, total = safe_db_call(search.simple_search, **query, sort=sort,
-                               limit=per, offset=page * per)
 
-    if total == 0:
-        st.warning("לא נמצאו תיקים תואמים.")
-        return
+    # results_area הוא placeholder יחיד (st.empty) שממלאים אותו מחדש בכל
+    # שלב - קודם עם ה-spinner (מחליף מיידית את התוצאות הקודמות שהוצגו,
+    # לא משאיר אותן קפואות על המסך עד שהשאילתה החדשה מסתיימת), ואז שוב
+    # עם התוצאות עצמן - כך שהמשתמש רואה מיד שהבקשה נקלטה ושעובדים עליה,
+    # במקום מסך "תקוע" בלי שום משוב במהלך השאילתה.
+    results_area = st.empty()
+    with results_area.container():
+        with st.spinner("מחפש תיקים תואמים..."):
+            rows, total = safe_db_call(search.simple_search, **query, sort=sort,
+                                       limit=per, offset=page * per)
 
-    pages = (total - 1) // per + 1
-    st.markdown(f'<div class="page-info">נמצאו <b>{total}</b> תיקים — '
-                f'עמוד {page + 1} מתוך {pages}</div>', unsafe_allow_html=True)
-    highlight_terms = [query["name"], query["judge"], query["city"], query["free_text"]]
-    for row in rows:
-        render_card(row, highlight_terms, key_prefix="simple")
+    with results_area.container():
+        if total == 0:
+            st.warning("לא נמצאו תיקים תואמים.")
+            return
 
-    if pages > 1:
-        p1, p2, p3 = st.columns([1, 2, 1])
-        if page > 0 and p1.button("→ הקודם", key="s_prev"):
-            st.session_state["simple_page"] = page - 1
-            st.rerun()
-        p2.markdown(f'<div class="page-info">{page + 1} / {pages}</div>',
-                    unsafe_allow_html=True)
-        if page < pages - 1 and p3.button("הבא ←", key="s_next"):
-            st.session_state["simple_page"] = page + 1
-            st.rerun()
+        pages = (total - 1) // per + 1
+        st.markdown(f'<div class="page-info">נמצאו <b>{total}</b> תיקים — '
+                    f'עמוד {page + 1} מתוך {pages}</div>', unsafe_allow_html=True)
+        highlight_terms = [query["name"], query["judge"], query["city"], query["free_text"]]
+        for row in rows:
+            render_card(row, highlight_terms, key_prefix="simple")
+
+        if pages > 1:
+            p1, p2, p3 = st.columns([1, 2, 1])
+            if page > 0 and p1.button("→ הקודם", key="s_prev"):
+                st.session_state["simple_page"] = page - 1
+                st.rerun()
+            p2.markdown(f'<div class="page-info">{page + 1} / {pages}</div>',
+                        unsafe_allow_html=True)
+            if page < pages - 1 and p3.button("הבא ←", key="s_next"):
+                st.session_state["simple_page"] = page + 1
+                st.rerun()
 
 
 # ============================ טאב חיפוש חכם (צ'אט) ============================

@@ -197,7 +197,16 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     # פסקי דין ישנים של העליון, מלפני שהופצו כקבצים מלאים) אין למשתמש
     # מה לעשות איתה בתוצאות חיפוש — היא רק מטרידה ("קובץ פסק הדין המלא
     # אינו זמין"), לא תוצאה שימושית.
-    where: list[str] = ["verdicts.has_document = 1"]
+    #
+    # has_document נשמר בנפרד משאר התנאים (לא בתוך where) בכוונה: has_document
+    # תואם ל-99.9% מהשורות (בלי סלקטיביות כלשהי), וכש-Turso (בלי ANALYZE)
+    # רואה אותו יחד עם תנאי סלקטיבי בהרבה (כמו case_type=?) באותה שאילתת
+    # COUNT, הוא בפועל בחר לסרוק דרך אינדקס has_document (677K שורות) במקום
+    # דרך אינדקס case_type (מאות שורות) - נמדד בפועל 4.3+ שניות. הפתרון:
+    # מסננים לפי שאר התנאים קודם (ב-CTE, ראו למטה בחישוב total), ומיישמים
+    # את has_document רק אחרי זה כתנאי-JOIN חיצוני.
+    has_doc_cond = "verdicts.has_document = 1"
+    where: list[str] = []
     params: list = []
 
     if name:
@@ -232,23 +241,33 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         where.append("COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) <= ?")
         params.append(date_to)
 
-    # הספירה הכוללת (total) תמיד משתמשת ב-IN/subquery, גם כש-use_bm25 —
-    # לא ב-JOIN מול verdicts_fts. נבדק בפועל מול Turso: COUNT(*) על JOIN
-    # מול verdicts_fts (גם fts-first וגם verdicts-first) גורם לתכנון שאילתה
-    # גרוע - סריקה מלאה של שתי הטבלאות (~1.28M rows_read, 22+ שניות) גם
-    # כשההתאמות מעטות, כי ל-ANALYZE (שהיה מתקן את זה מקומית) אין תמיכה
-    # ב-Turso המנוהל. שאילתת ה-COUNT ממילא לא זקוקה ל-bm25 (רק דירוג
-    # התוצאות עצמן זקוק לו), כך שאין שום אובדן מלהשתמש כאן תמיד ב-subquery.
     fts = _fts_query(free_text, match_mode)
     use_bm25 = bool(fts) and sort == "relevance"
 
+    # הספירה הכוללת (total): כש-Turso צריך גם למיין וגם לספור בלי LIMIT,
+    # מדידה בפועל הראתה שבחירת האינדקס גרועה בעקביות (בין אם has_document
+    # לבד, ביחד עם תנאי אחר, או ביחד עם JOIN ל-verdicts_fts) - סריקה כמעט
+    # מלאה גם כשההתאמות מעטות (ראו README.md: "מלכודת ביצועים קריטית").
+    # הפתרון האחיד: מסננים לפי כל שאר התנאים (name/judge/court/case_type/
+    # proceeding/תאריכים/FTS) קודם, בתוך CTE ממומש (MATERIALIZED - מכריח
+    # חישוב מיידי, לא inline), ורק *אחרי* זה מצטרפים לבדוק has_document -
+    # כך ש-has_document (הכי לא-סלקטיבי, 99.9% מהשורות) אף פעם לא נבחר
+    # כאינדקס-הכניסה. כשאין שום תנאי אחר, הבדיקה הפשוטה על has_document
+    # לבדה כבר מהירה (יש לה אינדקס ייעודי) - לא עוטפים ב-CTE בלי צורך.
     count_where = list(where)
     count_params = list(params)
     if fts:
         count_where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
         count_params.append(fts)
-    count_clause = (" WHERE " + " AND ".join(count_where)) if count_where else ""
-    total = conn.execute(f"SELECT COUNT(*) FROM verdicts{count_clause}", count_params).fetchone()[0]
+    if count_where:
+        count_clause = " AND ".join(count_where)
+        total = conn.execute(
+            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {count_clause}) "
+            f"SELECT COUNT(*) FROM matches m JOIN verdicts v ON v.id = m.id WHERE {has_doc_cond.replace('verdicts.', 'v.')}",
+            count_params,
+        ).fetchone()[0]
+    else:
+        total = conn.execute(f"SELECT COUNT(*) FROM verdicts WHERE {has_doc_cond}").fetchone()[0]
 
     # כשיש חיפוש חופשי בטקסט וגם מיון 'רלוונטיות', מצטרפים ל-verdicts_fts
     # (JOIN, לא subquery) כדי ש-bm25() יהיה זמין למיון — פונקציית bm25 של
@@ -256,7 +275,9 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     # לא בתת-שאילתה נפרדת. בכל מקרה אחר (אין חיפוש חופשי, או שנבחר מיון
     # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר. בניגוד ל-COUNT
     # למעלה, כאן יש LIMIT+ORDER BY — נבדק בפועל שזה כן מהיר מול Turso גם
-    # עם ה-JOIN (הבעיה הייתה ספציפית ל-COUNT(*) בלי LIMIT).
+    # כש-has_document משולב עם תנאים אחרים באותה שאילתה (הבעיה הייתה
+    # ספציפית ל-COUNT(*) בלי LIMIT).
+    where = [has_doc_cond] + where
     if fts:
         if use_bm25:
             where.append("verdicts_fts MATCH ?")
@@ -265,7 +286,7 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         params.append(fts)
 
     from_clause = "verdicts JOIN verdicts_fts ON verdicts_fts.rowid = verdicts.id" if use_bm25 else "verdicts"
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    clause = " WHERE " + " AND ".join(where)
     cols = ", ".join(f"verdicts.{f}" for f in _FIELDS)
     order = _order_sql(sort, use_bm25)
 
@@ -537,7 +558,12 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
     ב-simple_search: COUNT(*) על JOIN מול verdicts_fts גורם לתכנון שאילתה
     גרוע במיוחד מול Turso (סריקה מלאה, 22+ שניות בפועל)."""
     conn = get_conn(db_path)
-    where = ["v.has_document = 1"]
+    # has_document נשמר בנפרד משאר התנאים - ראו הערה מקבילה ומפורטת יותר
+    # ב-simple_search: כש-Turso רואה has_document (99.9% מהשורות) יחד עם
+    # תנאי סלקטיבי בהרבה (טווח תאריכים, court_scope, MATCH) באותה שאילתת
+    # COUNT, הוא בעקביות בוחר לסרוק לפי has_document ולא לפי התנאי הטוב
+    # יותר - סריקה כמעט מלאה גם כשההתאמות מעטות.
+    where: list[str] = []
     params: list = []
 
     if court_scope == "supreme":
@@ -546,22 +572,24 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
         where.append("NOT " + _SUPREME_PATH_COND)
 
     if date_from:
-        where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) >= ?")
+        where.append("COALESCE(NULLIF(decision_date,''), filed_date) >= ?")
         params.append(date_from)
     if date_to:
-        where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) <= ?")
+        where.append("COALESCE(NULLIF(decision_date,''), filed_date) <= ?")
         params.append(date_to)
-
     if fts_query:
+        where.append("id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+        params.append(fts_query)
+
+    if where:
+        clause = " AND ".join(where)
         sql = (
-            "SELECT COUNT(*) FROM verdicts v WHERE "
-            "v.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?) AND "
-            + " AND ".join(where)
+            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {clause}) "
+            f"SELECT COUNT(*) FROM matches m JOIN verdicts v ON v.id = m.id WHERE v.has_document = 1"
         )
-        n = conn.execute(sql, [fts_query] + params).fetchone()[0]
-    else:
-        sql = "SELECT COUNT(*) FROM verdicts v WHERE " + " AND ".join(where)
         n = conn.execute(sql, params).fetchone()[0]
+    else:
+        n = conn.execute("SELECT COUNT(*) FROM verdicts WHERE has_document = 1").fetchone()[0]
 
     conn.close()
     return n
