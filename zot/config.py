@@ -45,6 +45,12 @@ R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
 
+# ---- מסד נתונים מרוחק (Turso, libSQL) — מטא-דאטה + אינדקס חיפוש מלא ----
+# אופציונלי: אם לא מוגדר, זוט נופל בחזרה לקובץ SQLite מקומי (DB_PATH),
+# כפי שהיה לפני המעבר. ראו README.md: "תכנון ארכיטקטורה עתידי".
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL", "")
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+
 # ---- גישת SMTP/IMAP ל-Gmail (App Password) — בוט החיסיון + מייל סיכום יומי ----
 GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
