@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from zot import config, storage  # noqa: E402
+from zot import config, storage, turso_sync  # noqa: E402
 
 SENDER = "DecisionsPublishing@court.gov.il"
 SUBJECT = "עדכון אודות שינוי רמת החסיון של תיק"
@@ -124,12 +124,21 @@ def relpath_to_disk(rel: str) -> Path:
 
 def delete_rows(conn: sqlite3.Connection, rows: list[tuple], r2_client, r2_bucket) -> tuple[int, int]:
     """rows: (id, case_number, parties, judge, court, matter, decision_type,
-    full_text, file_relpath_pdf, file_relpath_docx, decision_date). מחזיר
-    (קבצים-שנמחקו, שורות-שנמחקו)."""
+    file_relpath_pdf, file_relpath_docx, decision_date). מחזיר
+    (קבצים-שנמחקו, שורות-שנמחקו).
+
+    הטקסט המלא לא נשמר יותר ב-verdicts (ראו zot/ingest.py) - נשלף מ-R2
+    (storage.fetch_fulltext) רק כדי לבנות את מחיקת ה-FTS (טבלת verdicts_fts
+    היא contentless: מחיקה דורשת את הערכים הישנים במפורש, ראו
+    zot/ingest.py: SCHEMA). אובייקט הטקסט המלא עצמו ב-R2 נמחק גם הוא
+    (storage.delete_fulltext) - קריטי לחיסיון: בלי זה, טקסט חסוי היה נשאר
+    נגיש דרך R2 גם אחרי 'מחיקת' הרשומה מהמאגר."""
     files_deleted = 0
+    deleted_for_turso: list[dict] = []
     for row in rows:
         (rid, case_number, parties, judge, court, matter, decision_type,
-         full_text, pdf_rel, docx_rel, _decision_date) = row
+         pdf_rel, docx_rel, _decision_date) = row
+        full_text = storage.fetch_fulltext(rid, r2_client)
         for rel in (pdf_rel, docx_rel):
             if not rel:
                 continue
@@ -145,6 +154,7 @@ def delete_rows(conn: sqlite3.Connection, rows: list[tuple], r2_client, r2_bucke
                     r2_client.delete_object(Bucket=r2_bucket, Key=rel)
                 except Exception as e:  # noqa: BLE001
                     _log(f"  שגיאה במחיקת אובייקט R2 {rel}: {e}")
+        storage.delete_fulltext(rid, r2_client)
         _execute_retry(
             conn,
             "INSERT INTO verdicts_fts(verdicts_fts, rowid, parties, judge, court, "
@@ -152,6 +162,15 @@ def delete_rows(conn: sqlite3.Connection, rows: list[tuple], r2_client, r2_bucke
             (rid, parties, judge, court, case_number, matter, decision_type, full_text),
         )
         _execute_retry(conn, "DELETE FROM verdicts WHERE id=?", (rid,))
+        deleted_for_turso.append({
+            "id": rid, "case_number": case_number, "parties": parties, "judge": judge,
+            "court": court, "matter": matter, "decision_type": decision_type,
+            "full_text": full_text,
+        })
+    try:
+        turso_sync.delete_verdicts(deleted_for_turso)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  שגיאה במחיקת הרשומות מ-Turso (הוסרו מקומית בהצלחה): {e}")
     return files_deleted, len(rows)
 
 
@@ -222,14 +241,14 @@ def main() -> int:
     for ctype, cnum, date_specific, msg_id in new_cases:
         rows = conn.execute(
             "SELECT id, case_number, parties, judge, court, matter, decision_type, "
-            "full_text, file_relpath_pdf, file_relpath_docx, decision_date "
+            "file_relpath_pdf, file_relpath_docx, decision_date "
             "FROM verdicts WHERE case_number=?",
             (cnum,),
         ).fetchall()
         if not rows:
             continue
         if date_specific:
-            rows = [r for r in rows if r[10] in date_specific]
+            rows = [r for r in rows if r[9] in date_specific]
             if not rows:
                 continue
         total_cases_matched += 1

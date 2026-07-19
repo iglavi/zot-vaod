@@ -53,7 +53,7 @@ def load_dotenv() -> None:
 # (כמו R2_*) פעם אחת בזמן הייבוא עצמו.
 load_dotenv()
 
-from zot import config  # noqa: E402
+from zot import config, turso_sync  # noqa: E402
 from zot.ingest import build as build_index  # noqa: E402
 from zot.storage import upload_new as upload_to_r2  # noqa: E402
 from zot.summarize import run as summarize_new  # noqa: E402
@@ -365,6 +365,7 @@ def main() -> int:
         stats = build_index(verbose=True, extra_sources=[(supreme_dir, "supreme/")])
         print(f"בוצע. במאגר כעת {stats['rows']} רשומות "
               f"({stats['documents_matched']} עם טקסט מלא).")
+        turso_sync.sync(verbose=True)
 
     # סיכום AI עולה כסף אמיתי (קריאות API) — לא רצים אוטומטית כברירת מחדל.
     # להפעיל: משתנה סביבה RUN_DAILY_SUMMARIZE=1.

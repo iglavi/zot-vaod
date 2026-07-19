@@ -36,7 +36,8 @@ def _bridge_secrets():
     """מעביר סודות של Streamlit Cloud למשתני סביבה (שאותם קורא ה-SDK של Anthropic)."""
     for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ZOT_MODEL",
                 "R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID",
-                "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+                "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+                "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"):
         if os.environ.get(key):
             continue
         try:
@@ -144,7 +145,14 @@ def _auto_build_index():
 
 def ensure_index_ui() -> bool:
     """מוודא שקיים אינדקס עדכני; מנסה קודם להוריד/לעדכן מ-R2, ורק אם זה
-    לא זמין נופל לבניה מקומית מהמסמכים הגולמיים. מחזיר True אם מוכן."""
+    לא זמין נופל לבניה מקומית מהמסמכים הגולמיים. מחזיר True אם מוכן.
+
+    אם TURSO_DATABASE_URL מוגדר, האתר מדבר ישירות מול Turso (ראו
+    zot/search.py: get_conn) ואין שום קובץ אינדקס מקומי להוריד/לבנות בכלל
+    — זה בדיוק מה שמבטל את זמן-ההמתנה הארוך בעליית קונטיינר חדש (הורדת
+    index.db כולו, שהלך וגדל)."""
+    if config.TURSO_DATABASE_URL:
+        return True
     _sync_index_from_r2()
     if search.db_exists():
         return True

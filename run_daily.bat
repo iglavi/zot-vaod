@@ -1,7 +1,9 @@
 @echo off
 REM Daily run (Windows Task Scheduler): downloads new decisions, uploads new
-REM files + rebuilds the index (fetch_daily.py), then uploads the updated
-REM index.db to R2 (too big for git's 100MB limit). Logs to daily_log.txt.
+REM files + rebuilds the index + syncs new rows to Turso (all inside
+REM fetch_daily.py - see zot/turso_sync.py), then also uploads index.db to
+REM R2 as an off-site backup snapshot (no longer downloaded by the live
+REM site once TURSO_DATABASE_URL is set - see README.md). Logs to daily_log.txt.
 cd /d "%~dp0"
 echo ==== %date% %time% ==== >> daily_log.txt
 python fetch_daily.py >> daily_log.txt 2>&1

@@ -3,11 +3,18 @@
 # (zot.storage.upload_index/sync_index) — האתר מוריד אותו משם בהפעלה.
 data/index.db
 data/index.db.bak*
+data/index.db.pre_*_backup
+data/index_turso.db
 data/index_upload_snapshot.db
 data/.*.synced_etag
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+
+# מעקב מקומי אחרי ההעברה החד-פעמית ל-R2/Turso וסנכרון יומי - ראו
+# _migrate_to_r2_turso.py / zot/turso_sync.py
+data/.migration_fulltext_uploaded.txt
+data/.turso_synced_max_id
 
 # פסקי דין (נתונים גולמיים, כולל ההורדות היומיות לתת-תיקיות) — לא נשמרים ב-git
 documents/**

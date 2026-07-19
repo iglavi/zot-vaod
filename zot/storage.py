@@ -158,6 +158,44 @@ def upload_fulltext(id_: int, text: str, client=None) -> bool:
         return False
 
 
+def upload_fulltexts(items: list[tuple[int, str]], verbose: bool = True) -> dict:
+    """מעלה טקסט מלא לכמה מסמכים במקביל (ThreadPoolExecutor, כמו upload_new/
+    fetch_fulltexts) - משמש ע"י zot.ingest.build() כדי שהעלאת מסמכים
+    שהוכנסו-זה-עתה לא תאט את קצב הכתיבה ל-DB המקומי (העלאה קורית אחרי
+    commit, לא בתוך הטרנזקציה). כשל בהעלאת מסמך בודד לא עוצר את השאר -
+    ראו upload_fulltext."""
+    client = _client()
+    if client is None or not config.R2_BUCKET or not items:
+        return {"configured": client is not None, "uploaded": 0, "errors": 0}
+    uploaded = errors = 0
+    with ThreadPoolExecutor(max_workers=min(_UPLOAD_WORKERS, len(items))) as pool:
+        futures = {pool.submit(upload_fulltext, id_, text, client): id_ for id_, text in items}
+        for fut in as_completed(futures):
+            if fut.result():
+                uploaded += 1
+            else:
+                errors += 1
+    if verbose and errors:
+        print(f"upload_fulltexts: {uploaded} הועלו, {errors} נכשלו.")
+    return {"configured": True, "uploaded": uploaded, "errors": errors}
+
+
+def delete_fulltext(id_: int, client=None) -> bool:
+    """מוחק את אובייקט הטקסט המלא של פסק דין בודד מ-R2 - חובה בכל מחיקת
+    רשומה (למשל confidentiality_bot.py: הסרת תיק שחוסה), אחרת הטקסט
+    (שעשוי להיות חסוי) נשאר נגיש דרך R2 גם אחרי ש'נמחק' מהמאגר. מחזיר
+    True/False (לא זורק) - ראו upload_fulltext."""
+    client = client or _client()
+    if client is None or not config.R2_BUCKET:
+        return False
+    try:
+        client.delete_object(Bucket=config.R2_BUCKET, Key=_fulltext_key(id_))
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"delete_fulltext: נכשל עבור id={id_}: {type(e).__name__}: {e}")
+        return False
+
+
 def fetch_fulltext(id_: int, client=None) -> str:
     """שולף טקסט פסק-דין בודד מ-R2. מחזיר מחרוזת ריקה אם לא קיים/נכשל
     (לא זורק - קריאה בודדת שנכשלת לא אמורה להפיל את כל הדף/התשובה)."""

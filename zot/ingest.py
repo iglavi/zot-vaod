@@ -18,7 +18,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config
+from . import config, storage
 from .case_types import normalize_case_type
 from .extract import (_normalize_court, extract_decision_date, extract_judge,
                       extract_metadata, filed_date_from_case, read_text)
@@ -91,9 +91,14 @@ _VERDICT_COLUMNS = [
     "case_number", "parties", "court", "proceeding", "case_type", "matter",
     "decision_type", "decision_nature", "filed_date", "decision_date", "judge",
     "filename", "file_relpath", "file_relpath_pdf", "file_relpath_docx",
-    "has_document", "full_text", "structural_summary",
+    "has_document", "structural_summary", "text_length",
 ]
 
+# הטקסט המלא עצמו (full_text) לא נשמר בטבלת verdicts - הוא מועלה בנפרד ל-R2
+# (ראו zot/storage.py: upload_fulltext/upload_fulltexts) ונשלף משם בעת
+# הצורך בלבד. text_length (אורך הטקסט בתווים) כן נשמר כאן - עמודה קטנה
+# שמאפשרת למיין לפי 'הכי ארוך'/'רלוונטיות' (ראו zot/search.py) בלי לגרור
+# את הטקסט המלא לכל שאילתת מיון.
 SCHEMA = """
 CREATE TABLE verdicts (
     id INTEGER PRIMARY KEY,
@@ -113,12 +118,12 @@ CREATE TABLE verdicts (
     file_relpath_pdf TEXT,
     file_relpath_docx TEXT,
     has_document INTEGER DEFAULT 0,
-    full_text TEXT,
-    structural_summary TEXT
+    structural_summary TEXT,
+    text_length INTEGER DEFAULT 0
 );
 CREATE VIRTUAL TABLE verdicts_fts USING fts5(
     parties, judge, court, case_number, matter, decision_type, full_text,
-    content='verdicts', content_rowid='id',
+    content='',
     tokenize='unicode61 remove_diacritics 2'
 );
 """
@@ -226,13 +231,20 @@ def _schema_matches(conn: sqlite3.Connection) -> bool:
 
 
 def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
-    """מכניס רשומה אחת גם ל-verdicts וגם (עם אותו rowid) לאינדקס הטקסט המלא
-    (verdicts_fts) — כך שאין צורך ב'rebuild' גורף בסיום, גם כשמוסיפים
-    רשומות בודדות אינקרementלית."""
+    """מכניס רשומה אחת ל-verdicts (בלי טקסט מלא - רק text_length, ראו SCHEMA)
+    וגם, עם אותו rowid, לאינדקס הטקסט המלא (verdicts_fts, contentless) —
+    כך שאין צורך ב'rebuild' גורף בסיום, גם כשמוסיפים רשומות בודדות
+    אינקרementלית. הטקסט המלא עצמו (values['full_text']) לא נשמר כאן -
+    הקורא אחראי להעלות אותו ל-R2 (ראו build(): pending_uploads) עם ה-rowid
+    שמוחזר, במקביל ולא בתוך הטרנזקציה הזו - כדי שהעלאה איטית/כושלת לרשת
+    לא תאט את קצב הכתיבה ל-DB המקומי."""
+    full_text = values.get("full_text", "")
+    row_values = dict(values)
+    row_values["text_length"] = len(full_text)
     placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
     cur = conn.execute(
         f"INSERT INTO verdicts ({','.join(_VERDICT_COLUMNS)}) VALUES ({placeholders})",
-        [values[c] for c in _VERDICT_COLUMNS],
+        [row_values[c] for c in _VERDICT_COLUMNS],
     )
     rowid = cur.lastrowid
     conn.execute(
@@ -240,7 +252,7 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
            matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)""",
         (rowid, values["parties"], values["judge"], values["court"],
          values["case_number"], values["matter"], values["decision_type"],
-         values["full_text"]),
+         full_text),
     )
     return rowid
 
@@ -265,6 +277,18 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     def _log(msg: str) -> None:
         if verbose:
             print(msg, flush=True)
+
+    # מסמכים שנוספו מאז ה-flush האחרון וטרם הועלו ל-R2 (ראו _insert_verdict:
+    # ההעלאה עצמה קורית כאן, לא בתוך הטרנזקציה של ה-INSERT, כדי שרשת
+    # איטית/כושלת לא תאט את קצב הכתיבה ל-DB המקומי). מועלים במקביל
+    # (ThreadPoolExecutor, ראו storage.upload_fulltexts) בכל נקודת commit —
+    # כך שגם אם התהליך נעצר באמצע, מה שכבר הועלה תואם את מה ש-commit-ה.
+    pending_uploads: list[tuple[int, str]] = []
+
+    def _flush_uploads() -> None:
+        if pending_uploads:
+            storage.upload_fulltexts(pending_uploads)
+            pending_uploads.clear()
 
     incremental = _schema_matches(conn)
     if incremental:
@@ -355,7 +379,7 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             filed = cell(row, "meta_date") or filed_date_from_case(case_number)
             relpath_pdf, relpath_docx = _relpaths(stem)
 
-            _insert_verdict(conn, {
+            rowid = _insert_verdict(conn, {
                 "case_number": case_number, "parties": cell(row, "parties"),
                 "court": _normalize_court(cell(row, "court")), "proceeding": cell(row, "proceeding"),
                 "case_type": normalize_case_type(cell(row, "case_type")), "matter": cell(row, "matter"),
@@ -367,9 +391,12 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                 "has_document": has_doc, "full_text": full_text,
                 "structural_summary": summary_cache.get(stem, ""),
             })
+            if full_text:
+                pending_uploads.append((rowid, full_text))
             rows_inserted += 1
             if rows_inserted % _COMMIT_EVERY == 0:
                 conn.commit()
+                _flush_uploads()
 
     def _ingest_plain(stem: str, base_dir: Path, exts: dict, file_relpath_prefix: str,
                       relpath_pdf: str, relpath_docx: str) -> bool:
@@ -395,7 +422,7 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         }
         filed = _dir_date(path) or filed_date_from_case(md["case_number"])
         file_relpath = file_relpath_prefix + path.relative_to(base_dir).as_posix()
-        _insert_verdict(conn, {
+        rowid = _insert_verdict(conn, {
             "case_number": md["case_number"], "parties": md["parties"],
             "court": md["court"], "proceeding": "", "case_type": md["case_type"],
             "matter": "", "decision_type": md["decision_type"], "decision_nature": "",
@@ -406,11 +433,14 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             "full_text": full_text,
             "structural_summary": summary_cache.get(stem, ""),
         })
+        if full_text:
+            pending_uploads.append((rowid, full_text))
         rows_inserted += 1
         if full_text:
             docs_matched += 1
         if rows_inserted % _COMMIT_EVERY == 0:
             conn.commit()
+            _flush_uploads()
         return True
 
     # ===== קבצים שאינם ב-CSV (למשל הורדות יומיות בשמות hash) =====
@@ -450,6 +480,7 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             _ingest_plain(stem, src_dir, exts, prefix, relpath_pdf, relpath_docx)
 
     conn.commit()
+    _flush_uploads()
     total_rows = conn.execute("SELECT COUNT(*) FROM verdicts").fetchone()[0]
     conn.close()
 

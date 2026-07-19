@@ -1,11 +1,13 @@
-"""שאילתות חיפוש מול אינדקס ה-SQLite: חיפוש רגיל (שדות) וחיפוש טקסט מלא."""
+"""שאילתות חיפוש מול אינדקס המטא-דאטה+FTS5 (Turso, אם מוגדר; אחרת קובץ
+SQLite מקומי - ראו get_conn) וטקסט מלא (Cloudflare R2, ראו zot/storage.py:
+fetch_fulltext/fetch_fulltexts - הטקסט לא חי יותר בטבלת verdicts עצמה)."""
 from __future__ import annotations
 
 import re
 import sqlite3
 from pathlib import Path
 
-from . import config
+from . import config, storage
 
 _FIELDS = ("id", "case_number", "parties", "court", "proceeding", "case_type",
            "matter", "decision_type", "decision_nature", "filed_date",
@@ -13,16 +15,41 @@ _FIELDS = ("id", "case_number", "parties", "court", "proceeding", "case_type",
            "file_relpath_pdf", "file_relpath_docx", "has_document")
 
 
-def get_conn(db_path: Path | None = None) -> sqlite3.Connection:
+def get_conn(db_path: Path | None = None):
+    """מחזיר חיבור ל-Turso (מרוחק) אם TURSO_DATABASE_URL מוגדר; אחרת נופל
+    בחזרה לקובץ SQLite מקומי (כפי שהיה לפני המעבר). שתי הגרסאות תומכות
+    ב-execute/fetchall/fetchone/commit/close באותה חתימה (libsql הוא fork
+    ישיר של SQLite) - אך בניגוד ל-sqlite3, ל-libsql אין row_factory, ולכן
+    כל הפונקציות כאן ממירות שורות למילון בעצמן (ראו _rows/_row) במקום
+    להסתמך על sqlite3.Row - כך שאותו קוד עובד מול שני הגיבויים בלי הבדל."""
+    if config.TURSO_DATABASE_URL:
+        import libsql
+        return libsql.connect(database=config.TURSO_DATABASE_URL,
+                              auth_token=config.TURSO_AUTH_TOKEN)
     path = Path(db_path or config.DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"האינדקס לא נבנה עדיין: {path}")
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite3.connect(str(path))
+
+
+def _row(cur, row) -> dict | None:
+    """ממיר שורה בודדת (tuple, משני הגיבויים) למילון לפי שמות העמודות -
+    מאפשר גישה row['field'] כמו שהקוד הקורא (app.py/ai_search.py) כבר
+    מצפה, בלי תלות ב-sqlite3.Row (שלא קיים ב-libsql)."""
+    if row is None:
+        return None
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def _rows(cur, rows) -> list[dict]:
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def db_exists(db_path: Path | None = None) -> bool:
+    if config.TURSO_DATABASE_URL:
+        return True
     return Path(db_path or config.DB_PATH).exists()
 
 
@@ -62,10 +89,10 @@ _RELEVANCE_TYPE_CASE = (
 )
 
 _SORT_SQL = {
-    "relevance": f"{_RELEVANCE_TYPE_CASE}, length(verdicts.full_text) DESC, verdicts.id DESC",
+    "relevance": f"{_RELEVANCE_TYPE_CASE}, verdicts.text_length DESC, verdicts.id DESC",
     "newest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) DESC, verdicts.id DESC",
     "oldest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) ASC, verdicts.id ASC",
-    "longest": "length(verdicts.full_text) DESC, verdicts.id DESC",
+    "longest": "verdicts.text_length DESC, verdicts.id DESC",
 }
 
 
@@ -163,7 +190,7 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
                   proceeding: str = "", case_type: str = "", date_from: str = "", date_to: str = "",
                   sort: str = "relevance",
                   limit: int = config.RESULTS_PER_PAGE, offset: int = 0,
-                  db_path: Path | None = None) -> tuple[list[sqlite3.Row], int]:
+                  db_path: Path | None = None) -> tuple[list[dict], int]:
     """חיפוש לפי שדות מובנים. מחזיר (רשומות בעמוד, סך הכל)."""
     conn = get_conn(db_path)
     # מסננים תמיד רק רשומות עם טקסט מלא זמין: רשומת מטא-דאטה בלבד (בעיקר
@@ -205,13 +232,31 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         where.append("COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) <= ?")
         params.append(date_to)
 
+    # הספירה הכוללת (total) תמיד משתמשת ב-IN/subquery, גם כש-use_bm25 —
+    # לא ב-JOIN מול verdicts_fts. נבדק בפועל מול Turso: COUNT(*) על JOIN
+    # מול verdicts_fts (גם fts-first וגם verdicts-first) גורם לתכנון שאילתה
+    # גרוע - סריקה מלאה של שתי הטבלאות (~1.28M rows_read, 22+ שניות) גם
+    # כשההתאמות מעטות, כי ל-ANALYZE (שהיה מתקן את זה מקומית) אין תמיכה
+    # ב-Turso המנוהל. שאילתת ה-COUNT ממילא לא זקוקה ל-bm25 (רק דירוג
+    # התוצאות עצמן זקוק לו), כך שאין שום אובדן מלהשתמש כאן תמיד ב-subquery.
+    fts = _fts_query(free_text, match_mode)
+    use_bm25 = bool(fts) and sort == "relevance"
+
+    count_where = list(where)
+    count_params = list(params)
+    if fts:
+        count_where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+        count_params.append(fts)
+    count_clause = (" WHERE " + " AND ".join(count_where)) if count_where else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM verdicts{count_clause}", count_params).fetchone()[0]
+
     # כשיש חיפוש חופשי בטקסט וגם מיון 'רלוונטיות', מצטרפים ל-verdicts_fts
     # (JOIN, לא subquery) כדי ש-bm25() יהיה זמין למיון — פונקציית bm25 של
     # FTS5 דורשת שהטבלה הוירטואלית תהיה נתונה ל-MATCH באותה שאילתה עצמה,
     # לא בתת-שאילתה נפרדת. בכל מקרה אחר (אין חיפוש חופשי, או שנבחר מיון
-    # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר.
-    fts = _fts_query(free_text, match_mode)
-    use_bm25 = bool(fts) and sort == "relevance"
+    # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר. בניגוד ל-COUNT
+    # למעלה, כאן יש LIMIT+ORDER BY — נבדק בפועל שזה כן מהיר מול Turso גם
+    # עם ה-JOIN (הבעיה הייתה ספציפית ל-COUNT(*) בלי LIMIT).
     if fts:
         if use_bm25:
             where.append("verdicts_fts MATCH ?")
@@ -224,79 +269,88 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     cols = ", ".join(f"verdicts.{f}" for f in _FIELDS)
     order = _order_sql(sort, use_bm25)
 
-    total = conn.execute(f"SELECT COUNT(*) FROM {from_clause}{clause}", params).fetchone()[0]
-    rows = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM {from_clause}{clause} "
         f"ORDER BY {order} "
         f"LIMIT ? OFFSET ?",
         params + [limit, offset],
-    ).fetchall()
+    )
+    rows = _rows(cur, cur.fetchall())
     conn.close()
     return rows, total
 
 
-def get_verdict(verdict_id: int, db_path: Path | None = None) -> sqlite3.Row | None:
+def get_verdict(verdict_id: int, db_path: Path | None = None) -> dict | None:
+    """פרטי פסק דין בודד, כולל הטקסט המלא (נשלף מ-R2 - ראו storage.fetch_fulltext,
+    לא נשמר יותר בטבלת verdicts עצמה)."""
     conn = get_conn(db_path)
-    row = conn.execute("SELECT * FROM verdicts WHERE id = ?", (verdict_id,)).fetchone()
+    cur = conn.execute("SELECT * FROM verdicts WHERE id = ?", (verdict_id,))
+    row = _row(cur, cur.fetchone())
     conn.close()
+    if row is not None:
+        row["full_text"] = storage.fetch_fulltext(verdict_id)
     return row
 
 
-def random_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
-    """פסק דין אקראי (עם טקסט מלא)."""
+def random_verdict(db_path: Path | None = None) -> dict | None:
+    """פסק דין אקראי."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
-    row = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
         f"ORDER BY RANDOM() LIMIT 1"
-    ).fetchone()
+    )
+    row = _row(cur, cur.fetchone())
     conn.close()
     return row
 
 
-def latest_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
+def latest_verdict(db_path: Path | None = None) -> dict | None:
     """פסק הדין הכי עדכני שיש במאגר (לפי תאריך החלטה)."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
-    row = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
         f"AND COALESCE(NULLIF(decision_date,''), filed_date) != '' "
         f"ORDER BY COALESCE(NULLIF(decision_date,''), filed_date) DESC LIMIT 1"
-    ).fetchone()
+    )
+    row = _row(cur, cur.fetchone())
     conn.close()
     return row
 
 
-def oldest_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
+def oldest_verdict(db_path: Path | None = None) -> dict | None:
     """פסק הדין הכי ותיק שיש במאגר — 'פסק דין היסטורי'."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
-    row = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
         f"AND COALESCE(NULLIF(decision_date,''), filed_date) != '' "
         f"ORDER BY COALESCE(NULLIF(decision_date,''), filed_date) ASC LIMIT 1"
-    ).fetchone()
+    )
+    row = _row(cur, cur.fetchone())
     conn.close()
     return row
 
 
-def keyword_verdict(terms: list[str], db_path: Path | None = None) -> sqlite3.Row | None:
+def keyword_verdict(terms: list[str], db_path: Path | None = None) -> dict | None:
     """פסק דין אקראי מתוך אלה שמכילים לפחות אחת ממילות המפתח (חיפוש
     טקסט חופשי) — משמש לאופציות כמו 'פסק דין על שימוש ב-AI'."""
     conn = get_conn(db_path)
     cols = ", ".join(f"v.{c}" for c in _FIELDS)
     fts = " OR ".join(f'"{t}"' for t in terms)
-    row = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM verdicts_fts f JOIN verdicts v ON v.id = f.rowid "
         f"WHERE f.verdicts_fts MATCH ? AND v.has_document=1 "
         f"ORDER BY RANDOM() LIMIT 1",
         (fts,),
-    ).fetchone()
+    )
+    row = _row(cur, cur.fetchone())
     conn.close()
     return row
 
 
-def landmark_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
+def landmark_verdict(db_path: Path | None = None) -> dict | None:
     """פסק דין 'מרכזי' — best-effort: נבחר אקראית מתוך פסקי דין של בית
     המשפט העליון (לא ניתוח אמיתי של חשיבות/תקדימיות, רק קירוב סביר).
 
@@ -306,11 +360,12 @@ def landmark_verdict(db_path: Path | None = None) -> sqlite3.Row | None:
     לאינדקס עם תו-בר פותח); LIKE 'supreme/%' הוא prefix match שכן."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
-    row = conn.execute(
+    cur = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
         f"AND {_SUPREME_PATH_COND} AND decision_type = 'פסק דין' "
         f"ORDER BY RANDOM() LIMIT 1"
-    ).fetchone()
+    )
+    row = _row(cur, cur.fetchone())
     conn.close()
     return row
 
@@ -347,7 +402,7 @@ def stats(db_path: Path | None = None) -> dict:
 def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
                     date_from: str = "", date_to: str = "",
                     limit: int = config.AI_MAX_DOCS, sort: str = "newest",
-                    db_path: Path | None = None) -> list[sqlite3.Row]:
+                    db_path: Path | None = None) -> list[dict]:
     """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים
     ו-court_scope (לפי נתיב קובץ ודאי, ראו _SUPREME_PATH_COND — לא לפי שדה
     court הטקסטואלי, שעשוי להיות ריק).
@@ -382,7 +437,8 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
             "WHERE f.verdicts_fts MATCH ? AND " + " AND ".join(where) +
             " ORDER BY bm25(f.verdicts_fts) LIMIT ?"
         )
-        rows = conn.execute(sql, [fts_query] + params + [limit * 3]).fetchall()
+        cur = conn.execute(sql, [fts_query] + params + [limit * 3])
+        rows = _rows(cur, cur.fetchall())
     else:
         rows = []
 
@@ -402,17 +458,20 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
             "SELECT v.* FROM verdicts v WHERE " + " AND ".join(date_where) +
             f" ORDER BY COALESCE(NULLIF(v.decision_date,''), v.filed_date) {direction} LIMIT ?"
         )
-        rows = conn.execute(sql, params + [limit * 3]).fetchall()
+        cur = conn.execute(sql, params + [limit * 3])
+        rows = _rows(cur, cur.fetchall())
 
     conn.close()
 
     # הסרת כפילויות (רשומות מטא-דאטה שונות המצביעות לאותו פסק דין) — בלי
     # הגבלה ל-limit כאן עדיין, כדי ש-_diversify_supreme יוכל לבחור מתוך
-    # כל המועמדים שנשלפו (limit*3), לא רק מתוך ה-top-K הגולמי.
+    # כל המועמדים שנשלפו (limit*3), לא רק מתוך ה-top-K הגולמי. מפתח הכפילות
+    # הוא case_number בלבד (לפני המעבר ל-R2 היה גם full_text - אבל הטקסט
+    # כבר לא נמצא בשלב הזה, נשלף רק בסוף עבור limit הסופי, ראו למטה).
     seen: set = set()
     unique = []
     for r in rows:
-        key = (r["case_number"], r["full_text"])
+        key = r["case_number"]
         if key in seen:
             continue
         seen.add(key)
@@ -420,10 +479,18 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
 
     if not court_scope:
         unique = _diversify_supreme(unique, limit)
-    return unique[:limit]
+    final = unique[:limit]
+
+    # טקסט מלא נשלף רק עבור ה-limit הסופי (לא כל limit*3 המועמדים) - במקביל
+    # (ThreadPoolExecutor, ראו storage.fetch_fulltexts) כדי שזמן התגובה לא
+    # יגדל ליניארית עם AI_MAX_DOCS.
+    texts = storage.fetch_fulltexts([r["id"] for r in final])
+    for r in final:
+        r["full_text"] = texts.get(r["id"], "")
+    return final
 
 
-def _is_supreme_row(row: sqlite3.Row) -> bool:
+def _is_supreme_row(row: dict) -> bool:
     return any((row[c] or "").startswith("supreme/")
                for c in ("file_relpath", "file_relpath_pdf", "file_relpath_docx"))
 
@@ -464,7 +531,11 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
     """סופר במדויק (COUNT, לא מוגבל ל-top-K) כמה פסקי דין תואמים — עבור
     מנוע ה-AI, כדי שיוכל לענות על שאלות 'כמה' בלי לבלבל בין מדגם המסמכים
     שהוצג לו לבין המספר האמיתי במאגר. court_scope: 'supreme' (בית המשפט
-    העליון, לפי נתיב קובץ) / 'general' (שאר בתי המשפט) / '' (הכול)."""
+    העליון, לפי נתיב קובץ) / 'general' (שאר בתי המשפט) / '' (הכול).
+
+    משתמש תמיד ב-IN/subquery (לא JOIN) כשיש fts_query - ראו הערה מקבילה
+    ב-simple_search: COUNT(*) על JOIN מול verdicts_fts גורם לתכנון שאילתה
+    גרוע במיוחד מול Turso (סריקה מלאה, 22+ שניות בפועל)."""
     conn = get_conn(db_path)
     where = ["v.has_document = 1"]
     params: list = []
@@ -483,8 +554,9 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
 
     if fts_query:
         sql = (
-            "SELECT COUNT(*) FROM verdicts_fts f JOIN verdicts v ON v.id = f.rowid "
-            "WHERE f.verdicts_fts MATCH ? AND " + " AND ".join(where)
+            "SELECT COUNT(*) FROM verdicts v WHERE "
+            "v.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?) AND "
+            + " AND ".join(where)
         )
         n = conn.execute(sql, [fts_query] + params).fetchone()[0]
     else:

@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from zot import ingest  # noqa: E402
+from zot import ingest, turso_sync  # noqa: E402
 
 SLEEP_BETWEEN_PASSES_SEC = 600  # 10 דקות
 
@@ -50,6 +50,7 @@ def main() -> int:
     while True:
         try:
             ingest.build(extra_sources=[(SUPREME_DOCS_DIR, SUPREME_PREFIX)])
+            turso_sync.sync()
         except Exception as e:  # noqa: BLE001
             print(f"שגיאה בבניית האינדקס: {e}")
         time.sleep(SLEEP_BETWEEN_PASSES_SEC)
