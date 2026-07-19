@@ -1,4 +1,7 @@
-"""העלאת קבצי פסקי הדין המקוריים (PDF/Word) לאחסון חיצוני (Cloudflare R2).
+"""העלאת קבצי פסקי הדין המקוריים (PDF/Word) לאחסון חיצוני (Cloudflare R2),
+וכן העלאה/שליפה של טקסט פסק-הדין המלא (מסמך בודד לכל פסק דין, ראו
+upload_fulltext/fetch_fulltext(s)) - הטקסט המלא כבר לא חי בתוך index.db
+עצמו (ראו zot/ingest.py), אלא נשלף מ-R2 לפי דרישה בלבד.
 
 זה מה שמאפשר לאתר הציבורי להציע גם את הקובץ המקורי להורדה, בלי לתלות
 את הארכיון כולו במחשב הבית (ובלי לדחוף קבצים כבדים ל-git).
@@ -123,6 +126,70 @@ def upload_new(verbose: bool = True, docs_dir: Path | None = None,
     if verbose:
         print(f"העלאה ל-R2: {uploaded} קבצים חדשים, {skipped} כבר הועלו, {errors} שגיאות.")
     return {"configured": True, "uploaded": uploaded, "skipped": skipped, "errors": errors}
+
+
+# טקסט פסק-הדין המלא של כל מסמך, כאובייקט בודד ב-R2 (לא בתוך index.db —
+# ראו zot/ingest.py) - דחוס gzip, כי טקסט משפטי דחוס היטב וזה חוסך גם
+# באחסון וגם בזמן ההעברה. מפתח לפי id (המזהה היציב היחיד שלא תלוי בשם
+# קובץ/נתיב מקור, שיכולים להשתנות).
+_FULLTEXT_PREFIX = "fulltext/"
+
+
+def _fulltext_key(id_: int) -> str:
+    return f"{_FULLTEXT_PREFIX}{id_}.txt.gz"
+
+
+def upload_fulltext(id_: int, text: str, client=None) -> bool:
+    """מעלה טקסט פסק-דין בודד ל-R2. מחזיר True/False (לא זורק) - כשל
+    בהעלאת מסמך בודד לא אמור לעצור אינדוקס של אלפי מסמכים אחרים."""
+    client = client or _client()
+    if client is None or not config.R2_BUCKET:
+        return False
+    import gzip
+    try:
+        client.put_object(
+            Bucket=config.R2_BUCKET, Key=_fulltext_key(id_),
+            Body=gzip.compress(text.encode("utf-8")),
+            ContentType="text/plain; charset=utf-8", ContentEncoding="gzip",
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"upload_fulltext: נכשל עבור id={id_}: {type(e).__name__}: {e}")
+        return False
+
+
+def fetch_fulltext(id_: int, client=None) -> str:
+    """שולף טקסט פסק-דין בודד מ-R2. מחזיר מחרוזת ריקה אם לא קיים/נכשל
+    (לא זורק - קריאה בודדת שנכשלת לא אמורה להפיל את כל הדף/התשובה)."""
+    client = client or _client()
+    if client is None or not config.R2_BUCKET:
+        return ""
+    import gzip
+    try:
+        obj = client.get_object(Bucket=config.R2_BUCKET, Key=_fulltext_key(id_))
+        return gzip.decompress(obj["Body"].read()).decode("utf-8")
+    except Exception as e:  # noqa: BLE001
+        print(f"fetch_fulltext: נכשל עבור id={id_}: {type(e).__name__}: {e}")
+        return ""
+
+
+def fetch_fulltexts(ids: list[int]) -> dict[int, str]:
+    """שולף טקסט מלא לכמה מסמכים במקביל (ThreadPoolExecutor, כמו
+    upload_new) - משמש כשצריך טקסט לכמה מסמכים בבת אחת (חיפוש חכם: עד
+    AI_MAX_DOCS מסמכים, לא כל המאגר). מדלג בשקט על מזהים שנכשלו/לא קיימים
+    (מחזיר מיפוי חלקי) במקום לזרוק ולהפיל את כל הבקשה."""
+    client = _client()
+    if client is None or not config.R2_BUCKET or not ids:
+        return {}
+    results: dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=min(_UPLOAD_WORKERS, len(ids))) as pool:
+        futures = {pool.submit(fetch_fulltext, id_, client): id_ for id_ in ids}
+        for fut in as_completed(futures):
+            id_ = futures[fut]
+            text = fut.result()
+            if text:
+                results[id_] = text
+    return results
 
 
 _UPLOAD_INDEX_RETRIES = 4
