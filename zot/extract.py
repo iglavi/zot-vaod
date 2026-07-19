@@ -502,6 +502,16 @@ _DEFENDANT_LABEL_RE = re.compile(
 # בטבלה, בלי ':' שיפריד אותה מהשם), אבל התבנית קיימת גם במקורות אחרים.
 _GEMATRIA_ORDINAL_RE = re.compile(r"^[א-ת](?:['׳]|[\"״][א-ת])$")
 _VS_RE = re.compile(r"\bנגד\b")
+# מרחק-חיפוש מוגבל אחרי תווית הצד הראשון (ראו _extract_parties_after_judges):
+# תיקים מאוחדים לפעמים כותבים את המפריד עם רווחים בין האותיות ('נ  ג  ד',
+# עיצוב טבלאי-מרכוז) שלא תואם \bנגד\b כלל - ובלי הגבלת-מרחק, החיפוש הבא
+# אחר 'נגד' התאמתי המשיך עד המילה 'נגד' הרגילה הראשונה בגוף ההחלטה עצמה
+# (למשל 'תביעה נגד המדינה'), מרחק מאות תווים משם הצד. זה גרר גם את חיפוש
+# תווית הנתבע להתחיל אחרי אותה נקודה מקרית בגוף הטקסט, ותפס שם-צד מזוהם
+# מפרוזת הגוף (למשל 'המשיב' כתת-מחרוזת בתוך 'התובע-המשיב'). כשה-'נגד'
+# האמיתי לא נמצא בטווח הזה, ה-fallback הקיים (d_label.start()/p_label.end())
+# כבר עובד נכון בלעדיו - אין סיבה לחפש 'נגד' רחוק.
+_VS_MAX_DISTANCE = 150
 _LIST_ITEM_START_RE = re.compile(r"^\s*\d+[.)]\s*")
 # 'ע"י ב"כ עו"ד X' (על ידי בא-כוח) — שם עורך/ת הדין המייצג/ת, לא הצד
 # עצמו. בד"כ מגיע אחרי שורה חדשה, אבל נמצא בפועל גם ללא שום מפריד כלל
@@ -564,7 +574,7 @@ def _extract_parties_after_judges(text: str) -> str:
     p_label = _PLAINTIFF_LABEL_RE.search(window)
     if not p_label:
         return ""
-    vs = _VS_RE.search(window, p_label.end())
+    vs = _VS_RE.search(window, p_label.end(), min(len(window), p_label.end() + _VS_MAX_DISTANCE))
     d_label = _DEFENDANT_LABEL_RE.search(window, vs.end() if vs else p_label.end())
     if not d_label:
         return ""

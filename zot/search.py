@@ -64,6 +64,20 @@ MATCH_MODES = ("any", "exact", "near")
 SORT_OPTIONS = ("relevance", "newest", "oldest", "longest")
 
 
+def _fts_phrase_for_column(text: str, column: str) -> str:
+    """בונה שאילתת FTS5 מוגבלת-עמודה (phrase match) עבור שדה בודד (שם צד/
+    שופט/מספר תיק) - במקום LIKE '%x%'. נבדק בפועל מול Turso: LIKE עם
+    תו-כללי מוביל (%) הוא תמיד סריקה מלאה (שום אינדקס לא יכול לעזור לו),
+    4+ שניות; FTS phrase על אותה עמודה - עשרות מ"ש. המחיר: FTS5 דורש
+    התאמת-token שלמה (לא תת-מחרוזת באמצע מילה) - קירוב סביר לחיפוש שם/
+    מספר תיק בפועל, שבד"כ מוקלד כמילה/מספר שלמים."""
+    tokens = _TOKEN_RE.findall(text or "")
+    if not tokens:
+        return ""
+    quoted = " ".join(tokens)
+    return f'{column}:"{quoted}"'
+
+
 def _fts_query(text: str, mode: str = "any") -> str:
     """הופך טקסט חופשי לביטוי FTS5 בטוח, לפי מצב ההתאמה שנבחר."""
     tokens = [t for t in _TOKEN_RE.findall(text or "") if len(t) >= 2]
@@ -210,11 +224,15 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     params: list = []
 
     if name:
-        where.append("verdicts.parties LIKE ?")
-        params.append(f"%{name.strip()}%")
+        fts_name = _fts_phrase_for_column(name, "parties")
+        if fts_name:
+            where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+            params.append(fts_name)
     if judge:
-        where.append("verdicts.judge LIKE ?")
-        params.append(f"%{judge.strip()}%")
+        fts_judge = _fts_phrase_for_column(judge, "judge")
+        if fts_judge:
+            where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+            params.append(fts_judge)
     if court_type or city:
         # 'court' עצמו נשאר תיאורי-מלא (לתצוגה) — סוג ועיר הם ממדים
         # נגזרים (ראו split_court), אז מסננים לפי רשימת ערכי court
@@ -226,8 +244,10 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         where.append(f"verdicts.court IN ({placeholders})")
         params.extend(matching)
     if case_number:
-        where.append("verdicts.case_number LIKE ?")
-        params.append(f"%{case_number.strip()}%")
+        fts_cn = _fts_phrase_for_column(case_number, "case_number")
+        if fts_cn:
+            where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+            params.append(fts_cn)
     if proceeding:
         where.append("verdicts.proceeding = ?")
         params.append(proceeding.strip())

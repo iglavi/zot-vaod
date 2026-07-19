@@ -208,10 +208,15 @@ def fmt_meta(row, terms: list[str] | None = None) -> str:
 def render_card(row, highlight_terms: list[str] | None = None, key_prefix: str = "card"):
     terms = highlight_terms or []
     parties_html = _highlight(row["parties"], terms) if row["parties"] else "—"
+    # מספר תיק לבדו לא מזהה את סוג ההליך (ת"א/ע"א/רע"א וכו') - מוסיפים את
+    # 'סוג עניין' (case_type) כתחילית כשהוא ידוע, בדיוק כפי שמופיע בפועל
+    # במסמכי בית המשפט עצמם ("ע"א 4584/10").
+    case_label = (f'{_esc(row["case_type"])} {_esc(row["case_number"])}' if row["case_type"]
+                 else _esc(row["case_number"]))
     st.markdown(
         f'<div class="result-card">'
         f'<div class="result-number">'
-        f'<span>{_esc(row["case_number"])}</span>'
+        f'<span>{case_label}</span>'
         f'<a href="?verdict={row["id"]}" style="color:var(--caramel);">🔗</a>'
         f'</div>'
         f'<div class="result-name">{parties_html}</div>'

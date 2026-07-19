@@ -112,11 +112,30 @@ def proceeding_for_case_type(case_type: str) -> str:
     return PROCEEDING_BY_CASE_TYPE.get((case_type or "").strip(), "")
 
 
+
+# שנה עברית (תש"פ, תשפ"א..תשפ"ט וכד') נתפסת לפעמים בטעות כ-case_type -
+# כנראה שנה שמופיעה קרוב לאזור-חיפוש ה-case_type בגוף המסמך ותואמת את
+# התבנית הכללית "כמה אותיות עבריות + גרשיים". בניגוד ליתר הקודים
+# הלא-מזוהים (שאין דרך אמינה להבחין בין קוד נדיר אמיתי לטעות, ולכן
+# נשמרים כפי שהם) - אף קוד אמיתי ב-VALID_CASE_TYPES לא מתחיל ב-'תש', כך
+# שזיהוי התבנית הזו בטוח: בוודאות שנה, לא סוג-עניין, ומוחזר ריק (לא
+# "התאמה קרובה" של קוד לא-נכון).
+_HEBREW_YEAR_RE = re.compile(r"^תש[א-ת]{1,2}[\"'׳״][א-ת]$")
+
+# תווית-קידומת בודדת ('ב'/'ה', כמו "ב-ע"פ 1234/56" או "בעניין ע"פ...")
+# שנגררה בטעות לתוך case_type יחד עם הקוד האמיתי שאחריה - נמצא בפועל
+# 12 קודים כאלה (283+ שורות, למשל 'בבג"ץ' 483 שורות). מוסרת רק אם התוצאה
+# אחרי ההסרה היא-עצמה קוד תקין (לא הסרה גורפת של כל 'ב'/'ה' מוביל, כי
+# הרבה קודים אמיתיים כן מתחילים באחת מהאותיות האלה בעצמם - למשל 'בג"ץ').
+_LEADING_PREFIX_LETTERS = "בה"
+
+
 def normalize_case_type(raw: str) -> str:
     """מנרמל ערך case_type גולמי מול הרשימה הקנונית (VALID_CASE_TYPES).
 
     אם הערך כבר תקין, או שלא ניתן לתקן אותו לערך תקין בדרך ידועה, מוחזר
-    כפי שהוא — לא חוסמים ולא מוחקים ערכים לא-מזוהים (ראו הערה למעלה)."""
+    כפי שהוא — לא חוסמים ולא מוחקים ערכים לא-מזוהים (ראו הערה למעלה),
+    חוץ משנה עברית (ראו _HEBREW_YEAR_RE) - שם בטוח בוודאות שזה לא קוד."""
     s = (raw or "").strip()
     if not s or s in VALID_CASE_TYPES:
         return s
@@ -124,6 +143,8 @@ def normalize_case_type(raw: str) -> str:
     if s2 in VALID_CASE_TYPES:
         return s2
     s = s2
+    if _HEBREW_YEAR_RE.match(s):
+        return ""
     m = _PAREN_CODE_RE.search(s)
     if m and m.group(1).strip() in VALID_CASE_TYPES:
         return m.group(1).strip()
@@ -134,4 +155,6 @@ def normalize_case_type(raw: str) -> str:
                 candidate = s[:-1] + swapped_char
                 if candidate in VALID_CASE_TYPES:
                     return candidate
+    if len(s) >= 2 and s[0] in _LEADING_PREFIX_LETTERS and s[1:] in VALID_CASE_TYPES:
+        return s[1:]
     return s
