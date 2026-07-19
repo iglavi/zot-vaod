@@ -74,9 +74,20 @@ _ANALYZE_SCHEMA = {
                 "מהמשפט הנוכחי. false אם זו שאלה עצמאית בנושא חדש/אחר."
             ),
         },
+        "intent": {
+            "type": "string", "enum": ["content_search", "latest", "oldest"],
+            "description": (
+                "'latest' אם השאלה שואלת על ההחלטה/פסק-הדין העדכני/החדש/"
+                "האחרון ביותר שקיים במאגר (או בתחום/בית-משפט/שופט מסוים) — "
+                "שאלת מטא על מיון-לפי-תאריך ('מה ההחלטה הכי מעודכנת "
+                "במאגר?'), לא חיפוש לפי תוכן/נושא משפטי. 'oldest' באופן "
+                "דומה עבור הישן/הראשון ביותר. אחרת (רוב השאלות, כולל כל "
+                "שאלה על נושא/מונח משפטי קונקרטי) — 'content_search'."
+            ),
+        },
     },
     "required": ["search_terms", "parties", "judge", "date_from", "date_to",
-                 "court_scope", "is_followup"],
+                 "court_scope", "is_followup", "intent"],
     "additionalProperties": False,
 }
 
@@ -128,6 +139,10 @@ def analyze_query(client, question: str, today: str | None = None,
         "'הרחב', 'מדגם רחב יותר') וחסר בה הקשר עצמאי — הסק את הנושא "
         "ומילות החיפוש מהשיחה הקודמת, וסמן is_followup=true. אחרת, "
         "is_followup=false.\n\n"
+        "שים לב ל-intent: אם השאלה שואלת על ההחלטה/פסק-הדין העדכני/הישן "
+        "ביותר במאגר (שאלת מטא על מיון-לפי-תאריך, לא על תוכן) — סמן זאת "
+        "ב-'latest'/'oldest' בהתאם, גם אם קשה להפיק ממנה מילות-חיפוש "
+        "תוכניות משמעותיות. אחרת — 'content_search'.\n\n"
         f"השאלה: {question}"
     )
     messages = list(history or []) + [{"role": "user", "content": prompt}]
@@ -143,7 +158,8 @@ def analyze_query(client, question: str, today: str | None = None,
     except Exception:
         # גיבוי: משתמשים בשאלה עצמה כמילות חיפוש
         data = {"search_terms": [question], "parties": [], "judge": "",
-                "date_from": "", "date_to": "", "court_scope": "", "is_followup": False}
+                "date_from": "", "date_to": "", "court_scope": "", "is_followup": False,
+                "intent": "content_search"}
     data.setdefault("search_terms", [])
     data.setdefault("parties", [])
     data.setdefault("judge", "")
@@ -151,6 +167,7 @@ def analyze_query(client, question: str, today: str | None = None,
     data.setdefault("date_to", "")
     data.setdefault("court_scope", "")
     data.setdefault("is_followup", False)
+    data.setdefault("intent", "content_search")
     return data
 
 
@@ -160,13 +177,30 @@ def retrieve(analysis: dict):
     להתבסס על מספר אמיתי מהמסד, ולא על גודל המדגם שהוצג למודל.
 
     מחזיר (verdicts, total_count)."""
+    court_scope = analysis.get("court_scope", "")
+    date_from = analysis.get("date_from", "")
+    date_to = analysis.get("date_to", "")
+    intent = analysis.get("intent", "content_search")
+
+    if intent in ("latest", "oldest"):
+        # שאלת מטא על מיון-לפי-תאריך ('מה ההחלטה הכי מעודכנת במאגר?') —
+        # לא חיפוש תוכני בכלל. fts_query ריק ביודעין (לא כי לא נמצאו
+        # מילות-חיפוש) כדי לעקוף לגמרי את דירוג ה-BM25, שאין לו מושג של
+        # 'הכי חדש' ומחזיר התאמות אקראיות-למראה למילים גנריות כמו
+        # 'עדכני'/'אחרון' (נבדק בפועל — ראו commit).
+        verdicts = search.retrieve_for_ai(
+            fts_query="", court_scope=court_scope, date_from=date_from, date_to=date_to,
+            limit=config.AI_MAX_DOCS, sort="oldest" if intent == "oldest" else "newest",
+        )
+        total_count = search.count_verdicts(
+            court_scope=court_scope, fts_query="", date_from=date_from, date_to=date_to,
+        )
+        return verdicts, total_count
+
     all_terms = list(analysis.get("search_terms", [])) + list(analysis.get("parties", []))
     if analysis.get("judge"):
         all_terms.append(analysis["judge"])
     fts = _fts_from_terms(all_terms)
-    court_scope = analysis.get("court_scope", "")
-    date_from = analysis.get("date_from", "")
-    date_to = analysis.get("date_to", "")
     verdicts = search.retrieve_for_ai(
         fts_query=fts, court_scope=court_scope, date_from=date_from, date_to=date_to,
         limit=config.AI_MAX_DOCS,

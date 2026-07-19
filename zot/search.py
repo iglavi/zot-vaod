@@ -346,11 +346,18 @@ def stats(db_path: Path | None = None) -> dict:
 
 def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
                     date_from: str = "", date_to: str = "",
-                    limit: int = config.AI_MAX_DOCS,
+                    limit: int = config.AI_MAX_DOCS, sort: str = "newest",
                     db_path: Path | None = None) -> list[sqlite3.Row]:
     """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים
     ו-court_scope (לפי נתיב קובץ ודאי, ראו _SUPREME_PATH_COND — לא לפי שדה
     court הטקסטואלי, שעשוי להיות ריק).
+
+    sort ('newest'/'oldest') קובע את כיוון המיון-לפי-תאריך של נתיב הגיבוי
+    (כש-fts_query ריק) — משמש גם כ'גיבוי אמיתי' (0 תוצאות טקסטואליות)
+    וגם ביודעין לשאלות מטא כמו 'מה ההחלטה העדכנית/הישנה ביותר' (ראו
+    zot/ai_search.py: retrieve) — שאלות כאלה אין להן כלל מילות-חיפוש
+    תוכניות משמעותיות, ו-BM25 (שאין לו מושג של 'הכי חדש') היה מחזיר
+    התאמות אקראיות-למראה למילים גנריות כמו 'עדכני'/'אחרון'.
 
     מחזיר רק פסקי דין שיש להם טקסט מלא (has_document=1)."""
     conn = get_conn(db_path)
@@ -379,11 +386,21 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
     else:
         rows = []
 
-    # גיבוי: אם אין תוצאות טקסטואליות, מחזירים את החדשים ביותר (בטווח התאריכים)
+    # גיבוי: אם אין תוצאות טקסטואליות (או כש-fts_query ריק בכוונה, ראו
+    # למעלה), מחזירים לפי מיון-תאריך בטווח התאריכים. ל'הישן ביותר' חייבים
+    # לסנן רשומות בלי שום תאריך (COALESCE נותן '' — מחרוזת ריקה, שממוינת
+    # *ראשונה* ב-ASC לפני כל תאריך אמיתי) — אחרת 'הישן ביותר' מחזיר בטעות
+    # רשומות חסרות-תאריך במקום את פסק הדין הישן האמיתי. לא נדרש ב-DESC
+    # ('החדש ביותר'): שם מחרוזת ריקה ממילא נופלת לסוף המיון מעצמה.
     if not rows:
+        oldest = sort == "oldest"
+        direction = "ASC" if oldest else "DESC"
+        date_where = list(where)
+        if oldest:
+            date_where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date, '') != ''")
         sql = (
-            "SELECT v.* FROM verdicts v WHERE " + " AND ".join(where) +
-            " ORDER BY COALESCE(NULLIF(v.decision_date,''), v.filed_date) DESC LIMIT ?"
+            "SELECT v.* FROM verdicts v WHERE " + " AND ".join(date_where) +
+            f" ORDER BY COALESCE(NULLIF(v.decision_date,''), v.filed_date) {direction} LIMIT ?"
         )
         rows = conn.execute(sql, params + [limit * 3]).fetchall()
 
