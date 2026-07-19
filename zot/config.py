@@ -71,7 +71,10 @@ AI_ANALYZE_MODEL = os.environ.get("ZOT_ANALYZE_MODEL", "claude-haiku-4-5")
 # Sonnet 5 (1M טוקן) בולע את זה בקלות; העלות/זמן-התשובה גדלים בהתאם
 # למספר הזה, אז לא הוגדל מעבר למבוקש בלי צורך.
 AI_MAX_DOCS = int(os.environ.get("ZOT_AI_MAX_DOCS", "20"))
-AI_MAX_CHARS_PER_DOC = int(os.environ.get("ZOT_AI_MAX_CHARS", "6000"))
+# הופחת מ-6000 ל-4800 (בקשת המשתמש: לצמצם זמן-תשובה) - הקשר קטן יותר
+# מקצר את שלב ה-prefill; רוב פסקי הדין ל-20 המסמכים ממילא לא מגיעים
+# לתקרה הזו, כך שההשפעה על מסמכים ארוכים בלבד.
+AI_MAX_CHARS_PER_DOC = int(os.environ.get("ZOT_AI_MAX_CHARS", "4800"))
 
 # ---- סיכום מובנה (AI) לפסקי דין ארוכים בלבד ----
 # מסמכים קצרים מ-3 עמודים (בעיקר "החלטות" טכניות) מדולגים — לא נשלחים ל-AI בכלל.
