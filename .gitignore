@@ -11,6 +11,9 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 
+*_pid.txt
+fix_all_skipped.log
+
 # מעקב מקומי אחרי ההעברה החד-פעמית ל-R2/Turso וסנכרון יומי - ראו
 # _migrate_to_r2_turso.py / zot/turso_sync.py
 data/.migration_fulltext_uploaded.txt
