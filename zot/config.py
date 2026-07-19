@@ -60,8 +60,11 @@ AI_MODEL = os.environ.get("ZOT_MODEL", "claude-sonnet-5")
 # רואה תחילת תשובה.
 AI_ANALYZE_MODEL = os.environ.get("ZOT_ANALYZE_MODEL", "claude-haiku-4-5")
 
-# כמה פסקי דין להעביר למודל בכל שאלה, וכמה תווים מכל אחד
-AI_MAX_DOCS = int(os.environ.get("ZOT_AI_MAX_DOCS", "8"))
+# כמה פסקי דין להעביר למודל בכל שאלה, וכמה תווים מכל אחד. הועלה מ-8
+# ל-20 (בקשת המשתמש: 8 מעטים מדי לתשובה מבוססת-היטב) — חלון ההקשר של
+# Sonnet 5 (1M טוקן) בולע את זה בקלות; העלות/זמן-התשובה גדלים בהתאם
+# למספר הזה, אז לא הוגדל מעבר למבוקש בלי צורך.
+AI_MAX_DOCS = int(os.environ.get("ZOT_AI_MAX_DOCS", "20"))
 AI_MAX_CHARS_PER_DOC = int(os.environ.get("ZOT_AI_MAX_CHARS", "6000"))
 
 # ---- סיכום מובנה (AI) לפסקי דין ארוכים בלבד ----
