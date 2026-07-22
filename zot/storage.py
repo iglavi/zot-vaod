@@ -56,6 +56,32 @@ def _client():
     )
 
 
+def _fast_client():
+    """כמו _client(), אבל עם timeout קצר בהרבה - לשימוש בנתיב אינטראקטיבי
+    (שליפת טקסט מלא בזמן שאלת AI חיה, ראו fetch_fulltext/fetch_fulltexts).
+    נמדד בפועל: retrieve() בחיפוש ה-AI קפץ מ-1-8 שניות ל-30-85 שניות
+    לסירוגין - קריאה בודדת שנתקלת בהאטה חולפת ב-R2 גוררת את ה-adaptive
+    retry (עד 3 ניסיונות עם backoff מצטבר) ו-read_timeout=600 של הלקוח
+    הרגיל, ותוקעת את כל התשובה למשתמש עד שהיא נגמרת. fetch_fulltext כבר
+    סובלני-בכוונה לכישלון בודד (מחזיר מחרוזת ריקה, לא זורק) - אז עדיף
+    כישלון מהיר על פני המתנה ארוכה; ה-timeout הארוך נשאר רק ב-_client()
+    הרגיל, שם הוא הכרחי (הורדת index.db החד-פעמית, מאות MB)."""
+    if not (config.R2_ACCOUNT_ID and config.R2_ACCESS_KEY_ID and config.R2_SECRET_ACCESS_KEY):
+        return None
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{config.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=config.R2_ACCESS_KEY_ID,
+        aws_secret_access_key=config.R2_SECRET_ACCESS_KEY,
+        region_name="auto",
+        config=Config(connect_timeout=5, read_timeout=10,
+                      retries={"max_attempts": 2, "mode": "standard"}),
+    )
+
+
 def _load_manifest(manifest_path: Path) -> set[str]:
     if manifest_path.exists():
         return set(manifest_path.read_text(encoding="utf-8").splitlines())
@@ -199,7 +225,7 @@ def delete_fulltext(id_: int, client=None) -> bool:
 def fetch_fulltext(id_: int, client=None) -> str:
     """שולף טקסט פסק-דין בודד מ-R2. מחזיר מחרוזת ריקה אם לא קיים/נכשל
     (לא זורק - קריאה בודדת שנכשלת לא אמורה להפיל את כל הדף/התשובה)."""
-    client = client or _client()
+    client = client or _fast_client()
     if client is None or not config.R2_BUCKET:
         return ""
     import gzip
@@ -216,7 +242,7 @@ def fetch_fulltexts(ids: list[int]) -> dict[int, str]:
     upload_new) - משמש כשצריך טקסט לכמה מסמכים בבת אחת (חיפוש חכם: עד
     AI_MAX_DOCS מסמכים, לא כל המאגר). מדלג בשקט על מזהים שנכשלו/לא קיימים
     (מחזיר מיפוי חלקי) במקום לזרוק ולהפיל את כל הבקשה."""
-    client = _client()
+    client = _fast_client()
     if client is None or not config.R2_BUCKET or not ids:
         return {}
     results: dict[int, str] = {}
