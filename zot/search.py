@@ -443,17 +443,21 @@ def stats(db_path: Path | None = None) -> dict:
 
 def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
                     date_from: str = "", date_to: str = "",
-                    limit: int = config.AI_MAX_DOCS, sort: str = "newest",
+                    limit: int = config.AI_MAX_DOCS, sort: str = "relevance",
                     db_path: Path | None = None) -> list[dict]:
-    """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים
-    ו-court_scope (לפי עמודת is_supreme המחושבת-מראש, ראו zot/ingest.py).
+    """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא (ברירת מחדל) +
+    סינון תאריכים ו-court_scope (לפי עמודת is_supreme המחושבת-מראש, ראו
+    zot/ingest.py).
 
-    sort ('newest'/'oldest') קובע את כיוון המיון-לפי-תאריך של נתיב הגיבוי
-    (כש-fts_query ריק) — משמש גם כ'גיבוי אמיתי' (0 תוצאות טקסטואליות)
-    וגם ביודעין לשאלות מטא כמו 'מה ההחלטה העדכנית/הישנה ביותר' (ראו
-    zot/ai_search.py: retrieve) — שאלות כאלה אין להן כלל מילות-חיפוש
-    תוכניות משמעותיות, ו-BM25 (שאין לו מושג של 'הכי חדש') היה מחזיר
-    התאמות אקראיות-למראה למילים גנריות כמו 'עדכני'/'אחרון'.
+    sort ('relevance'/'newest'/'oldest') עצמאי לגמרי מ-fts_query: 'newest'/
+    'oldest' עם fts_query לא-ריק מסנן לפי תוכן *וגם* ממיין לפי תאריך (לא
+    BM25) - עבור שאלות כמו 'מתי הפעם הראשונה ש-X קרה' שיש בהן גם נושא
+    אמיתי וגם צורך במיון-כרונולוגי (בלי זה, ההבחנה היחידה הייתה 'שאלת-מטא
+    בלי נושא בכלל' לעומת 'חיפוש-תוכן ממוין-רלוונטיות בלבד' - שאלה עם שני
+    הצרכים ביחד נפלה בין הכיסאות ומיפוי תוכן נזרק לגמרי, ראו commit).
+    כש-fts_query ריק (שאלת-מטא גורפת ללא נושא, למשל 'ההחלטה העדכנית ביותר
+    במאגר') sort קובע את כיוון המיון-הכרונולוגי הטהור - המקרה שלשמו sort
+    נועד במקור, ונשאר הגיבוי היחיד כש-0 תוצאות טקסטואליות בכלל.
 
     מחזיר רק פסקי דין שיש להם טקסט מלא (has_document=1)."""
     conn = get_conn(db_path)
@@ -473,10 +477,22 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
         params.append(date_to)
 
     if fts_query:
+        oldest = sort == "oldest"
+        fts_where = list(where)
+        if sort != "relevance":
+            # אותה בעיה כמו בנתיב הגיבוי למטה: ל'הישן ביותר' חייבים לסנן
+            # רשומות בלי שום תאריך, אחרת הן "מנצחות" ב-ASC (מחרוזת ריקה
+            # ממוינת ראשונה).
+            order_expr = "COALESCE(NULLIF(v.decision_date,''), v.filed_date)"
+            if oldest:
+                fts_where.append(f"{order_expr} != ''")
+            order_clause = f"{order_expr} {'ASC' if oldest else 'DESC'}"
+        else:
+            order_clause = "bm25(f.verdicts_fts)"
         sql = (
             "SELECT v.* FROM verdicts_fts f JOIN verdicts v ON v.id = f.rowid "
-            "WHERE f.verdicts_fts MATCH ? AND " + " AND ".join(where) +
-            " ORDER BY bm25(f.verdicts_fts) LIMIT ?"
+            "WHERE f.verdicts_fts MATCH ? AND " + " AND ".join(fts_where) +
+            f" ORDER BY {order_clause} LIMIT ?"
         )
         cur = conn.execute(sql, [fts_query] + params + [limit * 3])
         rows = _rows(cur, cur.fetchall())

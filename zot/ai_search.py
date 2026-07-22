@@ -80,20 +80,24 @@ _ANALYZE_SCHEMA = {
                 "מהמשפט הנוכחי. false אם זו שאלה עצמאית בנושא חדש/אחר."
             ),
         },
-        "intent": {
-            "type": "string", "enum": ["content_search", "latest", "oldest"],
+        "date_sort": {
+            "type": "string", "enum": ["relevance", "oldest", "newest"],
             "description": (
-                "'latest' אם השאלה שואלת על ההחלטה/פסק-הדין העדכני/החדש/"
-                "האחרון ביותר שקיים במאגר (או בתחום/בית-משפט/שופט מסוים) — "
-                "שאלת מטא על מיון-לפי-תאריך ('מה ההחלטה הכי מעודכנת "
-                "במאגר?'), לא חיפוש לפי תוכן/נושא משפטי. 'oldest' באופן "
-                "דומה עבור הישן/הראשון ביותר. אחרת (רוב השאלות, כולל כל "
-                "שאלה על נושא/מונח משפטי קונקרטי) — 'content_search'."
+                "כיוון המיון הרצוי - עצמאי לגמרי מהשאלה 'האם יש נושא "
+                "לחיפוש' (search_terms יכול להיות מלא גם כש-date_sort אינו "
+                "'relevance'). 'oldest': השאלה מבקשת את המוקדם/הראשון "
+                "ביותר - בין אם שאלת-מטא גורפת בלי נושא ('מה ההחלטה הישנה "
+                "ביותר במאגר?', search_terms ריק), ובין אם מתייחסת לנושא "
+                "ספציפי ('מתי הפעם הראשונה ש-X קרה?' - כאן יש לחלץ גם "
+                "מילות-חיפוש רגילות לנושא X ב-search_terms, לא להשאיר "
+                "ריק!). 'newest' באופן דומה עבור החדש/האחרון ביותר. אחרת "
+                "(רוב השאלות) - 'relevance' (מיון לפי רלוונטיות-תוכן "
+                "רגילה)."
             ),
         },
     },
     "required": ["search_terms", "parties", "judge", "date_from", "date_to",
-                 "court_scope", "is_followup", "intent"],
+                 "court_scope", "is_followup", "date_sort"],
     "additionalProperties": False,
 }
 
@@ -187,7 +191,7 @@ def analyze_query(client, question: str, today: str | None = None,
         # גיבוי: משתמשים בשאלה עצמה כמילות חיפוש
         data = {"search_terms": [question], "parties": [], "judge": "",
                 "date_from": "", "date_to": "", "court_scope": "", "is_followup": False,
-                "intent": "content_search"}
+                "date_sort": "relevance"}
     data.setdefault("search_terms", [])
     data.setdefault("parties", [])
     data.setdefault("judge", "")
@@ -195,7 +199,7 @@ def analyze_query(client, question: str, today: str | None = None,
     data.setdefault("date_to", "")
     data.setdefault("court_scope", "")
     data.setdefault("is_followup", False)
-    data.setdefault("intent", "content_search")
+    data.setdefault("date_sort", "relevance")
     return data
 
 
@@ -204,26 +208,21 @@ def retrieve(analysis: dict):
     (לא רק top-K) של כלל התוצאות התואמות — כדי שהתשובה לשאלות 'כמה' תוכל
     להתבסס על מספר אמיתי מהמסד, ולא על גודל המדגם שהוצג למודל.
 
+    date_sort ('relevance'/'oldest'/'newest') עצמאי לגמרי מקיום search_terms:
+    שאלת-מטא גורפת ('ההחלטה הישנה ביותר במאגר') מגיעה עם search_terms ריק
+    וממילא נופלת ל-fts_query="" (הגיבוי הכרונולוגי הטהור ב-retrieve_for_ai);
+    שאלה עם נושא אמיתי שדורש גם מיון-כרונולוגי ('מתי הפעם הראשונה ש-X
+    קרה?') מגיעה עם search_terms מלא + date_sort!='relevance', ומטופלת
+    ב-retrieve_for_ai כסינון-תוכן-ממוין-לפי-תאריך (לא לפי BM25) - בלי זה,
+    intent='oldest'/'latest' הישן היה מרוקן את ה-fts_query גם כשהיה נושא
+    אמיתי, ומחזיר תיקים כרונולוגית-ישנים לגמרי לא-קשורים (נבדק בפועל עם
+    'מתי הפעם הראשונה שבג"ץ פסל חקיקה' - ראו commit).
+
     מחזיר (verdicts, total_count)."""
     court_scope = analysis.get("court_scope", "")
     date_from = analysis.get("date_from", "")
     date_to = analysis.get("date_to", "")
-    intent = analysis.get("intent", "content_search")
-
-    if intent in ("latest", "oldest"):
-        # שאלת מטא על מיון-לפי-תאריך ('מה ההחלטה הכי מעודכנת במאגר?') —
-        # לא חיפוש תוכני בכלל. fts_query ריק ביודעין (לא כי לא נמצאו
-        # מילות-חיפוש) כדי לעקוף לגמרי את דירוג ה-BM25, שאין לו מושג של
-        # 'הכי חדש' ומחזיר התאמות אקראיות-למראה למילים גנריות כמו
-        # 'עדכני'/'אחרון' (נבדק בפועל — ראו commit).
-        verdicts = search.retrieve_for_ai(
-            fts_query="", court_scope=court_scope, date_from=date_from, date_to=date_to,
-            limit=config.AI_MAX_DOCS, sort="oldest" if intent == "oldest" else "newest",
-        )
-        total_count = search.count_verdicts(
-            court_scope=court_scope, fts_query="", date_from=date_from, date_to=date_to,
-        )
-        return verdicts, total_count
+    date_sort = analysis.get("date_sort", "relevance")
 
     all_terms = list(analysis.get("search_terms", [])) + list(analysis.get("parties", []))
     if analysis.get("judge"):
@@ -231,7 +230,7 @@ def retrieve(analysis: dict):
     fts = _fts_from_terms(all_terms)
     verdicts = search.retrieve_for_ai(
         fts_query=fts, court_scope=court_scope, date_from=date_from, date_to=date_to,
-        limit=config.AI_MAX_DOCS,
+        limit=config.AI_MAX_DOCS, sort=date_sort,
     )
     total_count = search.count_verdicts(
         court_scope=court_scope, fts_query=fts, date_from=date_from, date_to=date_to,
