@@ -293,29 +293,46 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     # (JOIN, לא subquery) כדי ש-bm25() יהיה זמין למיון — פונקציית bm25 של
     # FTS5 דורשת שהטבלה הוירטואלית תהיה נתונה ל-MATCH באותה שאילתה עצמה,
     # לא בתת-שאילתה נפרדת. בכל מקרה אחר (אין חיפוש חופשי, או שנבחר מיון
-    # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר. בניגוד ל-COUNT
-    # למעלה, כאן יש LIMIT+ORDER BY — נבדק בפועל שזה כן מהיר מול Turso גם
-    # כש-has_document משולב עם תנאים אחרים באותה שאילתה (הבעיה הייתה
-    # ספציפית ל-COUNT(*) בלי LIMIT).
-    where = [has_doc_cond] + where
-    if fts:
-        if use_bm25:
-            where.append("verdicts_fts MATCH ?")
-        else:
-            where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
-        params.append(fts)
-
-    from_clause = "verdicts JOIN verdicts_fts ON verdicts_fts.rowid = verdicts.id" if use_bm25 else "verdicts"
-    clause = " WHERE " + " AND ".join(where)
+    # אחר במפורש) ה-IN/subquery הרגיל מספיק ופשוט יותר.
     cols = ", ".join(f"verdicts.{f}" for f in _FIELDS)
     order = _order_sql(sort, use_bm25)
 
-    cur = conn.execute(
-        f"SELECT {cols} FROM {from_clause}{clause} "
-        f"ORDER BY {order} "
-        f"LIMIT ? OFFSET ?",
-        params + [limit, offset],
-    )
+    if count_where and not use_bm25:
+        # אותה מלכודת שהערת ה-COUNT למעלה מתעדת, מתבררת כפוגעת גם כאן
+        # בפועל (נבדק - לא רק תיאורטי): 'בית הדין לענייני מים' (סינון
+        # court_type אמיתי וסלקטיבי, 53 תוצאות אמיתיות) עם מיון 'relevance'
+        # לקח 5.9 שניות מקומית - ה-query planner בוחר את אינדקס-המיון
+        # (idx_verdicts_relevance/hasdoc_textlen, שמתחיל ב-has_document,
+        # התנאי הכי לא-סלקטיבי) במקום אינדקס-הסינון (idx_verdicts_court),
+        # וסורק כמעט את כל הטבלה לפי סדר-המיון עד שהוא מוצא/מוצה. אותו
+        # תיקון בדיוק כמו ב-COUNT: ממסמנים (MATERIALIZED) את המועמדים
+        # המסוננים קודם - מכריח את אינדקס-הסינון, ורק אז ממיינים את
+        # התוצאה הקטנה בהרבה. משתמשים ב-count_where/count_params שכבר
+        # מחושבים למעלה (זהים בדיוק לתנאים שרוצים למסנן לפיהם כאן).
+        clause = " AND ".join(count_where)
+        cur = conn.execute(
+            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {clause}) "
+            f"SELECT {cols} FROM matches JOIN verdicts ON verdicts.id = matches.id "
+            f"WHERE {has_doc_cond} "
+            f"ORDER BY {order} LIMIT ? OFFSET ?",
+            count_params + [limit, offset],
+        )
+    else:
+        where = [has_doc_cond] + where
+        if fts:
+            if use_bm25:
+                where.append("verdicts_fts MATCH ?")
+            else:
+                where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
+            params.append(fts)
+        from_clause = "verdicts JOIN verdicts_fts ON verdicts_fts.rowid = verdicts.id" if use_bm25 else "verdicts"
+        clause = " WHERE " + " AND ".join(where)
+        cur = conn.execute(
+            f"SELECT {cols} FROM {from_clause}{clause} "
+            f"ORDER BY {order} "
+            f"LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        )
     rows = _rows(cur, cur.fetchall())
     conn.close()
     return rows, total
