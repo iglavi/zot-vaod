@@ -91,7 +91,7 @@ _VERDICT_COLUMNS = [
     "case_number", "parties", "court", "proceeding", "case_type", "matter",
     "decision_type", "decision_nature", "filed_date", "decision_date", "judge",
     "filename", "file_relpath", "file_relpath_pdf", "file_relpath_docx",
-    "has_document", "structural_summary", "text_length",
+    "has_document", "structural_summary", "text_length", "is_supreme",
 ]
 
 # הטקסט המלא עצמו (full_text) לא נשמר בטבלת verdicts - הוא מועלה בנפרד ל-R2
@@ -119,7 +119,8 @@ CREATE TABLE verdicts (
     file_relpath_docx TEXT,
     has_document INTEGER DEFAULT 0,
     structural_summary TEXT,
-    text_length INTEGER DEFAULT 0
+    text_length INTEGER DEFAULT 0,
+    is_supreme INTEGER NOT NULL DEFAULT 0
 );
 CREATE VIRTUAL TABLE verdicts_fts USING fts5(
     parties, judge, court, case_number, matter, decision_type, full_text,
@@ -144,6 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_verdicts_hasdoc_effdate ON verdicts(has_document,
 CREATE INDEX IF NOT EXISTS idx_verdicts_relpath ON verdicts(file_relpath);
 CREATE INDEX IF NOT EXISTS idx_verdicts_decision_type ON verdicts(decision_type);
 CREATE INDEX IF NOT EXISTS idx_verdicts_case_type ON verdicts(case_type);
+CREATE INDEX IF NOT EXISTS idx_verdicts_is_supreme ON verdicts(is_supreme);
 -- מיון ברירת המחדל ('רלוונטיות', ראו search._RELEVANCE_TYPE_CASE) וגם
 -- 'לפי אורך טקסט' דורשים מיון על-פני כל הטבלה בלי אינדקס תואם - במיוחד
 -- חמור מול Turso (אין ANALYZE, ראו README.md): נמדד בפועל 4.4 שניות
@@ -259,6 +261,17 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
     # PROCEEDING_BY_CASE_TYPE) - לא דורסים ערך אמיתי שכבר קיים.
     if not row_values.get("proceeding"):
         row_values["proceeding"] = proceeding_for_case_type(row_values.get("case_type", ""))
+    # is_supreme: תיוג ודאי-ככל האפשר של 'ארכיון העליון' (ראו zot/search.py:
+    # _SUPREME_PATH_COND להסבר המלא) - נתיב קובץ שמתחיל ב-supreme/ (הארכיון
+    # ההיסטורי הנפרד) *או* שדה court מלא ('בית המשפט העליון', מגיע מההורדה
+    # היומית הרגילה - court עשוי גם להישאר ריק, לכן זה תנאי OR ולא תחליף
+    # לבדיקת הנתיב). מחושב פעם אחת כאן ולא ב-runtime בכל שאילתה, עם אינדקס.
+    row_values["is_supreme"] = 1 if (
+        (row_values.get("file_relpath") or "").startswith("supreme/")
+        or (row_values.get("file_relpath_pdf") or "").startswith("supreme/")
+        or (row_values.get("file_relpath_docx") or "").startswith("supreme/")
+        or "עליון" in (row_values.get("court") or "")
+    ) else 0
     placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
     cur = conn.execute(
         f"INSERT INTO verdicts ({','.join(_VERDICT_COLUMNS)}) VALUES ({placeholders})",
@@ -277,11 +290,16 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
 
 def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
           db_path: Path | None = None, verbose: bool = True,
-          extra_sources: list[tuple[Path, str]] | None = None) -> dict:
+          extra_sources: list[tuple[Path, str]] | None = None,
+          docs_prefix: str = "") -> dict:
     """extra_sources: מקורות מסמכים נוספים מעבר לארכיון הראשי (decisions.
     court.gov.il) — למשל בית המשפט העליון. כל איבר הוא (תיקיית-מקור,
     תחילית-מפתח-R2), כדי שקישורי ההורדה (file_relpath_pdf/docx) יצביעו
-    לקובץ הנכון בדלי (שם כל מקור מועלה תחת תחילית משלו — ראו zot.storage)."""
+    לקובץ הנכון בדלי (שם כל מקור מועלה תחת תחילית משלו — ראו zot.storage).
+
+    docs_prefix: אותו רעיון, אבל עבור המקור הראשי (docs_dir) עצמו - נדרש
+    כשקוראים ל-build() בנפרד עם docs_dir שאינו config.DOCS_DIR (למשל ארכיון
+    היסטורי נוסף שמקבל תחילית-R2 משלו, ראו _ingest_nethamishpat.py)."""
     metadata_path = Path(metadata_path or config.METADATA_PATH)
     docs_dir = Path(docs_dir or config.DOCS_DIR)
     db_path = Path(db_path or config.DB_PATH)
@@ -331,8 +349,8 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
         exts = by_ext.get(stem, {})
         pdf = exts.get(".pdf")
         docx = exts.get(".docx") or exts.get(".doc")
-        return (pdf.relative_to(docs_dir).as_posix() if pdf else "",
-                docx.relative_to(docs_dir).as_posix() if docx else "")
+        return (docs_prefix + pdf.relative_to(docs_dir).as_posix() if pdf else "",
+                docs_prefix + docx.relative_to(docs_dir).as_posix() if docx else "")
 
     # מקורות נוספים (כמו בית המשפט העליון): stem -> (תיקיית-מקור,
     # תחילית-R2, {סיומת: נתיב}). המקור הראשי מטופל בנפרד למעלה (גם

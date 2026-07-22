@@ -30,7 +30,7 @@ _VERDICT_COLUMNS = [
     "id", "case_number", "parties", "court", "proceeding", "case_type", "matter",
     "decision_type", "decision_nature", "filed_date", "decision_date", "judge",
     "filename", "file_relpath", "file_relpath_pdf", "file_relpath_docx",
-    "has_document", "text_length", "structural_summary",
+    "has_document", "text_length", "structural_summary", "is_supreme",
 ]
 
 

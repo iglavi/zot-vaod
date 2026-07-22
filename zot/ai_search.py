@@ -108,14 +108,36 @@ def get_client():
     return anthropic.Anthropic()
 
 
+_CASE_NUMBER_RE = re.compile(r"\d+[-/]\d+[-/]?\d*")
+
+
 def _fts_from_terms(terms: list[str]) -> str:
+    """מפרק כל מונח למילים נפרדות ומחבר ב-OR (למשל 'לשון הרע' -> "לשון" OR
+    "הרע") - מגדיל recall למונחים משפטיים חופשיים. אבל מספר תיק (למשל
+    '963-04-26', גם כשמגיע מעורבב בתוך מונח ארוך יותר כמו 'בגץ 963/04')
+    חייב להישאר ביטוי אחד רצוף, לא להתפרק לרסיסים - אחרת "963" OR "04" OR
+    "26" מתאים למאות אלפי מסמכים לא-קשורים (כל שברירי התאריך/המספר
+    הסידורי שכיחים בכל מספרי התיק בארכיון), וההתאמות הספציפיות טובעות
+    בהצפה הזו לפני שמגיעות ל-top-K של הדירוג (נבדק בפועל: '"963" OR "04"
+    OR "26"' החזיר 510,015 שורות, לעומת 12 עם הביטוי השלם). מאותה סיבה,
+    שברי-מספר בני 1-3 ספרות שנשארים אחרי חילוץ מספר-התיק (או שמגיעים בלי
+    הקשר מספר-תיק כלל) לא סלקטיביים מספיק כדי לתרום לחיפוש - רק מציפים."""
+    phrases: list[str] = []
     tokens: list[str] = []
     for term in terms:
-        for tok in re.findall(r"[\w֐-׿]+", term or "", flags=re.UNICODE):
-            if len(tok) >= 2:
-                tokens.append(tok)
+        term = (term or "").strip()
+        remainder = term
+        for m in _CASE_NUMBER_RE.finditer(term):
+            phrases.append(m.group())
+            remainder = remainder.replace(m.group(), " ")
+        for tok in re.findall(r"[\w֐-׿]+", remainder, flags=re.UNICODE):
+            if len(tok) < 2:
+                continue
+            if tok.isdigit() and len(tok) < 4:
+                continue
+            tokens.append(tok)
     seen: list[str] = []
-    for t in tokens:
+    for t in phrases + tokens:
         if t not in seen:
             seen.append(t)
     return " OR ".join(f'"{t}"' for t in seen)

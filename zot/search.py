@@ -395,15 +395,16 @@ def landmark_verdict(db_path: Path | None = None) -> dict | None:
     """פסק דין 'מרכזי' — best-effort: נבחר אקראית מתוך פסקי דין של בית
     המשפט העליון (לא ניתוח אמיתי של חשיבות/תקדימיות, רק קירוב סביר).
 
-    משתמש ב-_SUPREME_PATH_COND (נתיב קובץ, ודאי) ולא בשדה court הטקסטואלי
-    כמו קודם — court עשוי להישאר ריק גם עבור פסקי דין של העליון (חילוץ
-    best-effort), ו-'court LIKE %עליון%' דורש סריקה מלאה (לא ניתן
-    לאינדקס עם תו-בר פותח); LIKE 'supreme/%' הוא prefix match שכן."""
+    משתמש בעמודת is_supreme (מחושבת ומאונדקסת בזמן ה-ingest, ראו
+    zot/ingest.py: _insert_verdict) - לא בבדיקת נתיב-קובץ/court בזמן
+    השאילתה: זו האחרונה פספסה בפועל כל פסק דין של העליון שהגיע מההורדה
+    היומית הרגילה (רק supreme/... מהארכיון ההיסטורי הנפרד היה מזוהה), וגם
+    לא יכלה לכלול את שדה court בלי סריקה מלאה (LIKE עם % מוביל)."""
     conn = get_conn(db_path)
     cols = ", ".join(_FIELDS)
     cur = conn.execute(
         f"SELECT {cols} FROM verdicts WHERE has_document=1 "
-        f"AND {_SUPREME_PATH_COND} AND decision_type = 'פסק דין' "
+        f"AND is_supreme = 1 AND decision_type = 'פסק דין' "
         f"ORDER BY RANDOM() LIMIT 1"
     )
     row = _row(cur, cur.fetchone())
@@ -445,8 +446,7 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
                     limit: int = config.AI_MAX_DOCS, sort: str = "newest",
                     db_path: Path | None = None) -> list[dict]:
     """אחזור פסקי דין עבור מנוע ה-AI: דירוג BM25 על הטקסט המלא + סינון תאריכים
-    ו-court_scope (לפי נתיב קובץ ודאי, ראו _SUPREME_PATH_COND — לא לפי שדה
-    court הטקסטואלי, שעשוי להיות ריק).
+    ו-court_scope (לפי עמודת is_supreme המחושבת-מראש, ראו zot/ingest.py).
 
     sort ('newest'/'oldest') קובע את כיוון המיון-לפי-תאריך של נתיב הגיבוי
     (כש-fts_query ריק) — משמש גם כ'גיבוי אמיתי' (0 תוצאות טקסטואליות)
@@ -461,9 +461,9 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
     params: list = []
 
     if court_scope == "supreme":
-        where.append(_SUPREME_PATH_COND)
+        where.append("v.is_supreme = 1")
     elif court_scope == "general":
-        where.append("NOT " + _SUPREME_PATH_COND)
+        where.append("v.is_supreme = 0")
 
     if date_from:
         where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) >= ?")
@@ -537,8 +537,7 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
 
 
 def _is_supreme_row(row: dict) -> bool:
-    return any((row[c] or "").startswith("supreme/")
-               for c in ("file_relpath", "file_relpath_pdf", "file_relpath_docx"))
+    return bool(row.get("is_supreme"))
 
 
 def _diversify_supreme(rows: list, limit: int) -> list:
@@ -561,23 +560,14 @@ def _diversify_supreme(rows: list, limit: int) -> list:
     return [rows[i] for i in sorted(keep)]
 
 
-# תיוג ודאי של 'ארכיון העליון' לפי נתיב הקובץ (supreme/...), לא לפי שדה
-# court הטקסטואלי — כי court עשוי להישאר ריק גם עבור פסקי דין של העליון
-# (חילוץ מטא-דאטה best-effort שלא תמיד מוצא כותרת), בעוד שנתיב הקובץ
-# נקבע ודאית בזמן ה-ingest (ראו zot/ingest.py: extra_sources=[(...,'supreme/')]).
-_SUPREME_PATH_COND = (
-    "(file_relpath LIKE 'supreme/%' OR file_relpath_pdf LIKE 'supreme/%' "
-    "OR file_relpath_docx LIKE 'supreme/%')"
-)
-
-
 def count_verdicts(*, court_scope: str = "", fts_query: str = "",
                     date_from: str = "", date_to: str = "",
                     db_path: Path | None = None) -> int:
     """סופר במדויק (COUNT, לא מוגבל ל-top-K) כמה פסקי דין תואמים — עבור
     מנוע ה-AI, כדי שיוכל לענות על שאלות 'כמה' בלי לבלבל בין מדגם המסמכים
     שהוצג לו לבין המספר האמיתי במאגר. court_scope: 'supreme' (בית המשפט
-    העליון, לפי נתיב קובץ) / 'general' (שאר בתי המשפט) / '' (הכול).
+    העליון, לפי עמודת is_supreme המחושבת-מראש) / 'general' (שאר בתי
+    המשפט) / '' (הכול).
 
     משתמש תמיד ב-IN/subquery (לא JOIN) כשיש fts_query - ראו הערה מקבילה
     ב-simple_search: COUNT(*) על JOIN מול verdicts_fts גורם לתכנון שאילתה
@@ -592,9 +582,9 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
     params: list = []
 
     if court_scope == "supreme":
-        where.append(_SUPREME_PATH_COND)
+        where.append("is_supreme = 1")
     elif court_scope == "general":
-        where.append("NOT " + _SUPREME_PATH_COND)
+        where.append("is_supreme = 0")
 
     if date_from:
         where.append("COALESCE(NULLIF(decision_date,''), filed_date) >= ?")
