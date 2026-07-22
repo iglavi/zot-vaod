@@ -409,17 +409,23 @@ def extract_decision_date(text: str) -> str:
     """מחלץ את תאריך ההחלטה (הלועזי) ומחזיר ISO 'YYYY-MM-DD', או ''.
 
     מנסה קודם את שתי התבניות המעוגנות ל'ניתן/ניתנה' (אמינות - שורת החתימה
-    כמעט תמיד מכילה את המילה סמוך לתאריך האמיתי), ורק אם אף אחת מהן לא
-    נמצאה בכלל - נופל בחזרה לחיפוש גורף בטקסט (_DATE_RE, לא מעוגן, עלול
-    לתפוס כותרת/הפניה-לחוק לא-קשורה שמופיעה מוקדם יותר, ראו התיעוד שם).
-    שלושתן לוקחות את ההתאמה *האחרונה* מסוגה, לא הראשונה."""
+    כמעט תמיד מכילה את המילה סמוך לתאריך האמיתי) יחד, ממוינות לפי המיקום
+    בטקסט (לא לפי סוג התבנית!) - כי לפעמים מסמך מכיל גם עיגון-שווא מוקדם
+    יותר (למשל 'נגזר דינו... (28.07.2018)' באזכור הרשעה קודמת/היסטוריית
+    התיק, בפורמט-סוגריים) וגם את שורת החתימה האמיתית בהמשך בפורמט השני
+    (ללא סוגריים) - אם בודקים תבנית-אחר-תבנית (כל ה-parens-matches ואז כל
+    ה-longform-matches) ולא לפי סדר-הופעה אמיתי בטקסט, העיגון-השווא
+    המוקדם "מנצח" למרות שהוא לא באמת אחרון (ראו בדיקה בשיחה - id=1150390).
+    רק אם אף עיגון לא נמצא בכלל - נופל בחזרה לחיפוש גורף בטקסט (_DATE_RE,
+    לא מעוגן, עלול לתפוס כותרת/הפניה-לחוק לא-קשורה, ראו התיעוד שם)."""
     if not text:
         return ""
-    for day, month, year in _iter_signoff_dates(_DATE_SIGNOFF_RE, text):
-        result = _valid_iso_date(day, month, year)
-        if result:
-            return result
-    for day, month, year in _iter_signoff_dates(_DATE_SIGNOFF_LONGFORM_RE, text, heb_month=True):
+    candidates = sorted(
+        _iter_signoff_dates(_DATE_SIGNOFF_RE, text)
+        + _iter_signoff_dates(_DATE_SIGNOFF_LONGFORM_RE, text, heb_month=True),
+        key=lambda c: c[0], reverse=True,
+    )
+    for _pos, day, month, year in candidates:
         result = _valid_iso_date(day, month, year)
         if result:
             return result
@@ -430,11 +436,14 @@ def extract_decision_date(text: str) -> str:
     return ""
 
 
-def _iter_signoff_dates(pattern: re.Pattern, text: str, heb_month: bool = False):
-    """מפיק (day, month, year) מכל התאמה של pattern בטקסט, מהאחרונה
-    לראשונה (ראו extract_decision_date). heb_month: הקבוצה השנייה היא שם-
-    חודש עברי (_DATE_SIGNOFF_LONGFORM_RE) ולא מספר חודש (_DATE_SIGNOFF_RE)."""
-    for m in reversed(list(pattern.finditer(text))):
+def _iter_signoff_dates(pattern: re.Pattern, text: str, heb_month: bool = False) -> list[tuple]:
+    """מפיק [(מיקום, day, month, year), ...] מכל התאמה של pattern בטקסט
+    (ראו extract_decision_date - המיקום נדרש כדי למזג עם תבנית העיגון
+    השנייה ולמיין לפי סדר-הופעה אמיתי, לא לפי סוג-תבנית). heb_month:
+    הקבוצה השנייה היא שם-חודש עברי (_DATE_SIGNOFF_LONGFORM_RE) ולא מספר
+    חודש (_DATE_SIGNOFF_RE)."""
+    out = []
+    for m in pattern.finditer(text):
         day = int(m.group(1))
         month = HEB_MONTHS[m.group(2)] if heb_month else int(m.group(2))
         year = int(m.group(3))
@@ -442,7 +451,8 @@ def _iter_signoff_dates(pattern: re.Pattern, text: str, heb_month: bool = False)
             # שנה דו-ספרתית: המאגר כולל פסקי דין מתחילת שנות ה-90 ואילך —
             # "99" הוא 1999 (לא 2099). חלון סביר: 00-30 -> 20XX, 31-99 -> 19XX.
             year += 2000 if year <= 30 else 1900
-        yield day, month, year
+        out.append((m.start(), day, month, year))
+    return out
 
 
 # זיהוי כותרת פסק הדין: {בית משפט} {סוג תיק} {מספר תיק} {צדדים} לפני ...
