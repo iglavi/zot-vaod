@@ -466,7 +466,7 @@ def stats(db_path: Path | None = None) -> dict:
     return {"total": total, "with_documents": with_docs}
 
 
-def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
+def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "", court_names: list[str] | None = None,
                     date_from: str = "", date_to: str = "",
                     limit: int = config.AI_MAX_DOCS, sort: str = "relevance",
                     db_path: Path | None = None) -> list[dict]:
@@ -493,6 +493,9 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "",
         where.append("v.is_supreme = 1")
     elif court_scope == "general":
         where.append("v.is_supreme = 0")
+    if court_names:
+        where.append(f"v.court IN ({','.join('?' * len(court_names))})")
+        params.extend(court_names)
 
     if date_from:
         where.append("COALESCE(NULLIF(v.decision_date,''), v.filed_date) >= ?")
@@ -601,7 +604,7 @@ def _diversify_supreme(rows: list, limit: int) -> list:
     return [rows[i] for i in sorted(keep)]
 
 
-def count_verdicts(*, court_scope: str = "", fts_query: str = "",
+def count_verdicts(*, court_scope: str = "", court_names: list[str] | None = None, fts_query: str = "",
                     date_from: str = "", date_to: str = "",
                     db_path: Path | None = None) -> int:
     """סופר במדויק (COUNT, לא מוגבל ל-top-K) כמה פסקי דין תואמים — עבור
@@ -626,6 +629,9 @@ def count_verdicts(*, court_scope: str = "", fts_query: str = "",
         where.append("is_supreme = 1")
     elif court_scope == "general":
         where.append("is_supreme = 0")
+    if court_names:
+        where.append(f"court IN ({','.join('?' * len(court_names))})")
+        params.extend(court_names)
 
     if date_from:
         where.append("COALESCE(NULLIF(decision_date,''), filed_date) >= ?")

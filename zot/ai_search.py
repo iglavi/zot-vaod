@@ -45,10 +45,53 @@ _SYSTEM_ANSWER = (
     "עליה), וצמצם ניסוחים חוזרים. אל תקצר את התוכן המשפטי המהותי עצמו -"
     " מספרי תיקים, שמות שופטים, נימוקים, ותוצאות ההליך צריכים להישאר "
     "מלאים ומדויקים כפי שהיו. המטרה היא תשובה קצת יותר דחוסה, לא תשובה "
-    "שטחית יותר."
+    "שטחית יותר.\n\n"
+    "חשוב מאוד לגבי מספר פסקי הדין שתדון בהם: כשיש הרבה פסקי דין "
+    "רלוונטיים לנושא, אל תנסה להתייחס לכל אחד ואחד מהם בנפרד - זה בדיוק "
+    "מה שגורם לתשובות ארוכות מדי שלוקחות יותר מדי זמן להיווצר (וב-קיצון "
+    "אף נקטעות באמצע). התמקד בדיון מפורט ב-5 עד 8 פסקי הדין המשמעותיים/"
+    "המייצגים ביותר לנושא (על פי סוג ההליך, ערכאה, או השוני בין הקביעות) "
+    "- לא יותר, גם אם סופקו לך עד 20 מסמכים. אל תציין שבחרת תת-קבוצה "
+    "(ראו למעלה: אסור לרמוז על מדגם/חלקיות) - פשוט כתוב על פחות תיקים, "
+    "בלי הערה על כך. שאלות עם מעט מאוד תוצאות רלוונטיות (שלא דורשות "
+    "צמצום כדי להישאר בטווח סביר) לא מושפעות מהמגבלה הזו."
 )
 
-_ANALYZE_SCHEMA = {
+_court_type_cache: list[str] | None = None
+
+
+# רק סוגים "נקיים" (מילת-קטגוריה בודדת) - לא כל מה שיש בפועל בארכיון
+# (ראו court_type_options). הסוגים הנדירים שהושמטו (בית הדין לענייני מים,
+# בית המשפט לימאות, בית דין לשכירות, בית משפט צבאי מנהלי, ועדות שחרורים/
+# ערר) הם מוסדות ייחודיים עם שם-מלא-כערך-enum, ויש להם 2-160 רשומות בלבד
+# בסה"כ - זניח. אבל הימצאותם ברשימה גרמה בפועל למודל "למשוך" אליהם שאלות
+# על סוגים נפוצים לגמרי: "מה נפסק בבית הדין לעבודה" חילץ court_type="בית
+# הדין לענייני מים" (לא "עבודה"!) ב-3 מתוך 5 ניסיונות חוזרים על אותה שאלה
+# בדיוק - כנראה משיכה לקסיקלית ל'בית הדין' המילולי בערך המלא, למרות דוגמה
+# מפורשת ב-prompt הממפה בדיוק את המקרה הזה ל-'עבודה'. הסרת סוגי-השם-המלא
+# הנדירים (זניחים ממילא) פותרת את הבלבול עבור הסוגים הנפוצים.
+_COMMON_COURT_TYPES = ("שלום", "מחוזי", "עבודה", "משפחה", "מנהלי", "תביעות קטנות",
+                       "תעבורה", "עניינים מקומיים")
+
+
+def _court_type_choices() -> list[str]:
+    """סוגי בית-משפט (לא-עליון, ורק הנפוצים - ראו לעיל) שקיימים בפועל
+    במאגר, לצורך אכיפת enum על court_type למטה - נבנה עצלנית (לא בזמן
+    import, כדי לא לדרוש חיבור-DB מוכן כבר אז) ונשמר במטמון לתהליך כולו
+    (הרשימה משתנה לעיתים רחוקות בלבד - לא שווה שאילתת-DB נוספת בכל קריאה
+    ל-analyze_query)."""
+    global _court_type_cache
+    if _court_type_cache is None:
+        try:
+            existing = set(search.court_type_options())
+            _court_type_cache = [t for t in _COMMON_COURT_TYPES if t in existing]
+        except Exception:  # noqa: BLE001
+            _court_type_cache = []
+    return _court_type_cache
+
+
+def _build_analyze_schema() -> dict:
+    return {
     "type": "object",
     "properties": {
         "search_terms": {
@@ -68,6 +111,18 @@ _ANALYZE_SCHEMA = {
                 "'supreme' אם השאלה מתייחסת ספציפית לבית המשפט העליון "
                 "(או בג\"ץ), 'general' אם היא מתייחסת לבתי משפט אחרים "
                 "בלבד (שלום/מחוזי/עבודה וכו', לא העליון), אחרת ריק."
+            ),
+        },
+        "court_type": {
+            "type": "string", "enum": [""] + _court_type_choices(),
+            "description": (
+                "אם השאלה מתייחסת ספציפית לסוג בית-משפט/דין אחד מסוים "
+                "(לא העליון - לזה משמש court_scope='supreme' למעלה) - "
+                "בחר את הסוג המדויק מהרשימה. אחרת השאר ריק (גם אם "
+                "court_scope='general' - זה סתם 'לא עליון', רחב הרבה "
+                "יותר מסוג ספציפי אחד). לדוגמה: 'מה נפסק בבית משפט "
+                "השלום ב...' -> 'שלום'; 'מה נפסק בבית הדין לעבודה' -> "
+                "'עבודה'. אל תנחש סוג שלא ברשימה."
             ),
         },
         "is_followup": {
@@ -97,9 +152,9 @@ _ANALYZE_SCHEMA = {
         },
     },
     "required": ["search_terms", "parties", "judge", "date_from", "date_to",
-                 "court_scope", "is_followup", "date_sort"],
+                 "court_scope", "court_type", "is_followup", "date_sort"],
     "additionalProperties": False,
-}
+    }
 
 
 def has_ai_credentials() -> bool:
@@ -203,7 +258,7 @@ def analyze_query(client, question: str, today: str | None = None,
         resp = client.messages.create(
             model=os.environ.get("ZOT_ANALYZE_MODEL") or config.AI_ANALYZE_MODEL,
             max_tokens=600,
-            output_config={"format": {"type": "json_schema", "schema": _ANALYZE_SCHEMA}},
+            output_config={"format": {"type": "json_schema", "schema": _build_analyze_schema()}},
             messages=messages,
         )
         text = next((b.text for b in resp.content if b.type == "text"), "{}")
@@ -211,14 +266,15 @@ def analyze_query(client, question: str, today: str | None = None,
     except Exception:
         # גיבוי: משתמשים בשאלה עצמה כמילות חיפוש
         data = {"search_terms": [question], "parties": [], "judge": "",
-                "date_from": "", "date_to": "", "court_scope": "", "is_followup": False,
-                "date_sort": "relevance"}
+                "date_from": "", "date_to": "", "court_scope": "", "court_type": "",
+                "is_followup": False, "date_sort": "relevance"}
     data.setdefault("search_terms", [])
     data.setdefault("parties", [])
     data.setdefault("judge", "")
     data.setdefault("date_from", "")
     data.setdefault("date_to", "")
     data.setdefault("court_scope", "")
+    data.setdefault("court_type", "")
     data.setdefault("is_followup", False)
     data.setdefault("date_sort", "relevance")
     # רשת ביטחון דטרמיניסטית: מספר תיק מפורש בשאלה עצמה (לא בהיסטוריה -
@@ -249,22 +305,36 @@ def retrieve(analysis: dict):
     אמיתי, ומחזיר תיקים כרונולוגית-ישנים לגמרי לא-קשורים (נבדק בפועל עם
     'מתי הפעם הראשונה שבג"ץ פסל חקיקה' - ראו commit).
 
+    court_type: סוג בית-משפט ספציפי לא-עליון (למשל 'שלום', 'עבודה') - עצמאי
+    מ-court_scope ('general' הוא סתם 'לא עליון', הרבה יותר רחב מסוג בודד).
+    מתורגם כאן לרשימת שמות court מדויקים דרך אותה _courts_matching שכבר
+    משמשת את החיפוש הרגיל (zot/search.py: simple_search), כדי שהתאמה בין
+    שני הפורמטים השונים שבהם אותו סוג בית-משפט נשמר בפועל (ראו שם) תישאר
+    במקום אחד. אם court_type לא ריק אבל לא תואם אף בית-משפט קיים (למשל
+    המודל ניחש ערך שלא ברשימה חרף ה-enum) - מתייחסים אליו כאילו ריק, לא
+    מסננים ל-0 תוצאות בטעות.
+
     מחזיר (verdicts, total_count)."""
     court_scope = analysis.get("court_scope", "")
+    court_type = analysis.get("court_type", "")
     date_from = analysis.get("date_from", "")
     date_to = analysis.get("date_to", "")
     date_sort = analysis.get("date_sort", "relevance")
+
+    court_names = search._courts_matching(court_type, "") if court_type else None
 
     all_terms = list(analysis.get("search_terms", [])) + list(analysis.get("parties", []))
     if analysis.get("judge"):
         all_terms.append(analysis["judge"])
     fts = _fts_from_terms(all_terms)
     verdicts = search.retrieve_for_ai(
-        fts_query=fts, court_scope=court_scope, date_from=date_from, date_to=date_to,
+        fts_query=fts, court_scope=court_scope, court_names=court_names,
+        date_from=date_from, date_to=date_to,
         limit=config.AI_MAX_DOCS, sort=date_sort,
     )
     total_count = search.count_verdicts(
-        court_scope=court_scope, fts_query=fts, date_from=date_from, date_to=date_to,
+        court_scope=court_scope, court_names=court_names, fts_query=fts,
+        date_from=date_from, date_to=date_to,
     )
     return verdicts, total_count
 
@@ -293,19 +363,24 @@ _SCOPE_LABEL = {
 
 
 def answer_stream(client, question: str, verdicts, total_count: int = 0,
-                  court_scope: str = "", history: list[dict] | None = None):
+                  court_scope: str = "", court_type: str = "", history: list[dict] | None = None):
     """שלב 2ב: מחזיר גנרטור של קטעי טקסט (streaming) עם התשובה המנומקת.
 
-    total_count/court_scope: מספר התוצאות הכולל במאגר עבור החיפוש הנוכחי
-    (ספירה ישירה, לא top-K) והיקפו — מועברים למודל כעובדה נפרדת מהמסמכים
-    המוצגים, כדי שיוכל לענות נכון על שאלות 'כמה' (ראו _SYSTEM_ANSWER).
+    total_count/court_scope/court_type: מספר התוצאות הכולל במאגר עבור
+    החיפוש הנוכחי (ספירה ישירה, לא top-K) והיקפו — מועברים למודל כעובדה
+    נפרדת מהמסמכים המוצגים, כדי שיוכל לענות נכון על שאלות 'כמה' (ראו
+    _SYSTEM_ANSWER). court_type (אם סופק) מחליף את ה-scope הכללי בתיאור
+    מדויק יותר ('שלום' ולא סתם 'לא עליון') - ראו zot/ai_search.py: retrieve.
 
     history מאפשר שיחת המשך: רשימת תורות קודמות ({"role": "user"/"assistant",
     "content": טקסט}) בלי הקשר פסקי-הדין המלא של תורות קודמות (רק השאלה
     והתשובה) — כדי לשמור את ההיסטוריה קומפקטית וזולה, תוך שהמודל עדיין
     "זוכר" את מהלך השיחה."""
     context = _build_context(verdicts)
-    scope_label = _SCOPE_LABEL.get(court_scope, _SCOPE_LABEL[""])
+    if court_type:
+        scope_label = f"עבור בתי המשפט/הדין מסוג '{court_type}' בלבד"
+    else:
+        scope_label = _SCOPE_LABEL.get(court_scope, _SCOPE_LABEL[""])
     # בלי לנקוב במספר המסמכים המוצגים (למשל 'מדגם, עד 20 מסמכים') —
     # ראו _SYSTEM_ANSWER: המשתמש/ת לא אמור/ה לדעת/להסיק כמה מסמכים
     # שימשו למענה, לא רק את המספר הכולל האמיתי (total_count, שנשאר).

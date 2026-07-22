@@ -523,6 +523,7 @@ def tab_ai():
             for chunk in ai_search.answer_stream(client, question, verdicts,
                                                  total_count=total_count,
                                                  court_scope=analysis.get("court_scope", ""),
+                                                 court_type=analysis.get("court_type", ""),
                                                  history=history):
                 collected.append(chunk)
                 answer_box.markdown("".join(collected) + "▌")
