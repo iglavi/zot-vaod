@@ -170,6 +170,15 @@ def sync(db_path: Path | None = None, verbose: bool = True) -> dict:
                 "matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)",
                 [id_, ft[1], ft[2], ft[3], ft[4], ft[5], ft[6], texts.get(id_, "")],
             ))
+            # מחזיק את distinct_values מעודכן גם ב-Turso (ראו search._distinct_values
+            # ו-ingest._insert_verdict - אותו רעיון, גם כאן) - בלעדיו ערך חדש
+            # לגמרי לא יופיע בתפריטי הסינון עד לבאקפיל ידני נוסף.
+            for field, val in (("court", row[3]), ("proceeding", row[4]), ("case_type", row[5])):
+                if val:
+                    statements.append((
+                        "INSERT OR IGNORE INTO distinct_values(field, value) VALUES (?,?)",
+                        [field, val],
+                    ))
             max_id_in_chunk = max(max_id_in_chunk, id_)
         _run_batch(statements)
         synced += len(chunk)

@@ -157,6 +157,16 @@ CREATE INDEX IF NOT EXISTS idx_verdicts_relevance ON verdicts(
     text_length DESC, id DESC
 );
 CREATE INDEX IF NOT EXISTS idx_verdicts_hasdoc_textlen ON verdicts(has_document, text_length DESC, id DESC);
+-- טבלת cache קטנה לערכים ייחודיים (court/case_type/proceeding) - ראו
+-- zot/search.py: _distinct_values. בלעדיה, כל טעינת עמוד ראשית סורקת
+-- DISTINCT על כל הטבלה (630K שורות בעבר, 1.5M+ היום) - נמדד בפועל 13.5
+-- שניות מול Turso, מספיק כדי לחתוך את חיבור ה-Hrana באמצע התשובה
+-- ('unexpected EOF during chunk size line') ולהפיל את כל האתר.
+CREATE TABLE IF NOT EXISTS distinct_values (
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (field, value)
+);
 """
 
 # מטמון קבוע לסיכומי AI — לא נמחק בכל בנייה (בין אם מלאה או אינקרementלית),
@@ -285,6 +295,15 @@ def _insert_verdict(conn: sqlite3.Connection, values: dict) -> int:
          values["case_number"], values["matter"], values["decision_type"],
          full_text),
     )
+    # מחזיק את distinct_values מעודכן תוך כדי (ראו search._distinct_values) -
+    # כדי שערך חדש (court/case_type/proceeding שמעולם לא הופיע) יופיע
+    # בתפריטי הסינון בלי לחכות לבאקפיל ידני.
+    for field in ("court", "case_type", "proceeding"):
+        val = row_values.get(field) or ""
+        if val:
+            conn.execute(
+                "INSERT OR IGNORE INTO distinct_values(field, value) VALUES (?,?)", (field, val)
+            )
     return rowid
 
 

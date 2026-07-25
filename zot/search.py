@@ -167,13 +167,37 @@ def split_court(court: str) -> tuple[str, str]:
     return s, ""
 
 
+def _distinct_values(field: str, conn) -> list[str]:
+    """שולף ערכים ייחודיים לעמודה (court/case_type/proceeding) מטבלת
+    ה-cache הקטנה distinct_values במקום SCAN מלא של verdicts (630K שורות
+    בעבר, 1.5M+ היום וגדל) - נבדק בפועל: SELECT DISTINCT court ישיר לקח
+    13.5 שניות מול Turso על המאגר הנוכחי (היה 1.15s בעבר, לפני שהמאגר
+    גדל פי-2.4+) - זה חרג משקט-הזמן שבין הענן ל-Turso וגרם ל'unexpected
+    EOF during chunk size line' (חיבור-Hrana נקטע) - כל טעינת עמוד עם
+    _cached_simple_search_meta נכשלה. distinct_values מוחזק ידנית (לא
+    אוטומטית מכל נתיב-ingest עדיין - ראו TODO ב-ingest.py) ולכן ערך חדש
+    לגמרי (court/case_type/proceeding שמעולם לא הופיע קודם) לא יופיע
+    בתפריטי הסינון עד לבאקפיל הבא - שולי לעומת האתר שהיה שבור לגמרי.
+    fallback לסריקה הישנה אם הטבלה לא קיימת (DB מקומי ישן/לא-מהוגר)."""
+    try:
+        rows = conn.execute(
+            "SELECT value FROM distinct_values WHERE field = ? ORDER BY value", (field,)
+        ).fetchall()
+        if rows:
+            return [r[0] for r in rows]
+    except Exception:  # noqa: BLE001 - טבלה לא קיימת ב-DB מקומי ישן
+        pass
+    rows = conn.execute(f"SELECT DISTINCT {field} FROM verdicts WHERE {field} != ''").fetchall()
+    return [r[0] for r in rows]
+
+
 def court_type_options(db_path: Path | None = None) -> list[str]:
     """סוגי בית המשפט ('ערכאה') שקיימים בפועל במאגר, למיון בתפריט
     הסינון — לא כל 13 הסוגים תמיד קיימים (תלוי בהרכב הארכיון)."""
     conn = get_conn(db_path)
-    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    courts = _distinct_values("court", conn)
     conn.close()
-    types = {split_court(r[0])[0] for r in rows}
+    types = {split_court(c)[0] for c in courts}
     return sorted(types)
 
 
@@ -182,10 +206,10 @@ def court_city_options(court_type: str = "", db_path: Path | None = None) -> lis
     רק הערים שיש להן בית משפט מהסוג הזה (למניעת רשימת ערים שלא רלוונטיות
     לסוג שכבר נבחר בתפריט השני)."""
     conn = get_conn(db_path)
-    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    courts = _distinct_values("court", conn)
     conn.close()
     cities = set()
-    for (court,) in rows:
+    for court in courts:
         t, city = split_court(court)
         if city and (not court_type or t == court_type):
             cities.add(city)
@@ -197,10 +221,10 @@ def _courts_matching(court_type: str, city: str, db_path: Path | None = None) ->
     כדי לבנות סינון 'court IN (...)' בלי לשמור סוג/עיר כעמודות DB
     נפרדות (ראו split_court)."""
     conn = get_conn(db_path)
-    rows = conn.execute("SELECT DISTINCT court FROM verdicts WHERE court != ''").fetchall()
+    courts = _distinct_values("court", conn)
     conn.close()
     matches = []
-    for (court,) in rows:
+    for court in courts:
         t, c = split_court(court)
         if (not court_type or t == court_type) and (not city or c == city):
             matches.append(court)
@@ -439,11 +463,9 @@ def landmark_verdict(db_path: Path | None = None) -> dict | None:
 
 def distinct_proceedings(db_path: Path | None = None) -> list[str]:
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT DISTINCT proceeding FROM verdicts WHERE proceeding != '' ORDER BY proceeding"
-    ).fetchall()
+    values = _distinct_values("proceeding", conn)
     conn.close()
-    return [r[0] for r in rows]
+    return sorted(values)
 
 
 def distinct_case_types(db_path: Path | None = None) -> list[str]:
@@ -451,11 +473,9 @@ def distinct_case_types(db_path: Path | None = None) -> list[str]:
     במאגר — לא כל ~370 הקודים ברשימת נבו תמיד קיימים (תלוי בהרכב
     הארכיון), אז התפריט גדל בעצמו ברגע שמופיע קוד חדש."""
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT DISTINCT case_type FROM verdicts WHERE case_type != '' ORDER BY case_type"
-    ).fetchall()
+    values = _distinct_values("case_type", conn)
     conn.close()
-    return [r[0] for r in rows]
+    return sorted(values)
 
 
 def stats(db_path: Path | None = None) -> dict:
