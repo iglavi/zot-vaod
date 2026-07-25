@@ -24,8 +24,18 @@ def get_conn(db_path: Path | None = None):
     להסתמך על sqlite3.Row - כך שאותו קוד עובד מול שני הגיבויים בלי הבדל."""
     if config.TURSO_DATABASE_URL:
         import libsql
-        return libsql.connect(database=config.TURSO_DATABASE_URL,
-                              auth_token=config.TURSO_AUTH_TOKEN)
+        # scheme https:// (לא libsql://) מכריח פרוטוקול Hrana-over-HTTP
+        # stateless (כמו zot/turso_sync.py: _run_batch) במקום חיבור
+        # WebSocket מתמשך - נבדק בפועל: האתר החי קרס שוב ושוב עם
+        # "Hrana: cursor error: ... unexpected EOF during chunk size line"
+        # גם אחרי שהשאילתות עצמן נעשו מהירות פי-6+ (ראו commit הקודם) -
+        # כלומר זה לא היה בעיית מהירות-שאילתה אלא בעיית-תעבורה בפרוטוקול
+        # ה-WebSocket-Hrana עצמו בסביבת הענן של Streamlit. הבקשות הישירות
+        # (requests, HTTP רגיל) ב-turso_sync.py מעולם לא נכשלו כך.
+        url = config.TURSO_DATABASE_URL
+        if url.startswith("libsql://"):
+            url = "https://" + url[len("libsql://"):]
+        return libsql.connect(database=url, auth_token=config.TURSO_AUTH_TOKEN)
     path = Path(db_path or config.DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"האינדקס לא נבנה עדיין: {path}")
