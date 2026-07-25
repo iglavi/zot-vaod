@@ -14,28 +14,102 @@ _FIELDS = ("id", "case_number", "parties", "court", "proceeding", "case_type",
            "decision_date", "judge", "filename", "file_relpath",
            "file_relpath_pdf", "file_relpath_docx", "has_document")
 
+# ראו simple_search: תקרה על ה-MATERIALIZED CTE של סינון-לפני-מיון, למקרה
+# הקצה של פילטר רחב-חריג (למשל court_type='שלום' בלבד - יותר ממחצית
+# מהמאגר) שאפילו המסמון עצמו הופך לאיטי מדי (נמדד: 80+ שניות).
+_BROAD_FILTER_CAP = 5000
+
+
+def _untype_hrana(cell) -> object:
+    """הופך תא בפורמט ה-typed-value של Hrana (ראו turso_sync._typed_arg,
+    הכיוון ההפוך) לערך פייתון רגיל."""
+    t = cell.get("type")
+    v = cell.get("value")
+    if t == "null":
+        return None
+    if t == "integer":
+        return int(v)
+    if t == "float":
+        return float(v)
+    return v  # text (וגם blob, לא בשימוש כאן) - כבר מחרוזת
+
+
+class _HranaCursor:
+    """מדמה cursor בסיסי בסגנון DB-API (description/fetchall/fetchone)
+    כדי ש-_row/_rows ב-search.py יעבדו בלי שינוי, בלי תלות בחבילת libsql."""
+    def __init__(self, cols: list[str], rows: list[tuple]):
+        self.description = [(c,) for c in cols]
+        self._rows = rows
+        self._idx = 0
+
+    def fetchall(self) -> list[tuple]:
+        rows, self._idx = self._rows[self._idx:], len(self._rows)
+        return rows
+
+    def fetchone(self) -> tuple | None:
+        if self._idx >= len(self._rows):
+            return None
+        row = self._rows[self._idx]
+        self._idx += 1
+        return row
+
+
+class _HranaConn:
+    """חיבור Turso דרך Hrana-over-HTTP ישיר (POST בודד סינכרוני ל-
+    /v2/pipeline לכל execute, בלי session/WebSocket מתמשך) - תחליף מלא
+    ל-libsql.connect() שנכשל שוב ושוב באתר החי (Streamlit Cloud) עם
+    'Hrana: cursor error: ... unexpected EOF during chunk size line',
+    גם אחרי שהשאילתות עצמן נעשו מהירות פי-6+ (ראו commit קודם - זה לא
+    היה בעיית מהירות-שאילתה) וגם אחרי הכרחת scheme https:// (ראו commit
+    קודם - זה גם לא עזר, אז זו כנראה בעיה בפרוטוקול/גרסת חבילת libsql
+    עצמה, לא רק ב-scheme). הפרוטוקול הזה (בקשת HTTP ישירה, requests רגיל)
+    כבר עובד באמינות מלאה ב-turso_sync.py (_run_batch) לאורך מאות קריאות
+    בסשן הזה - אף פעם לא נכשל כך."""
+    def __init__(self, url: str, auth_token: str):
+        self._url = url.rstrip("/") + "/v2/pipeline"
+        self._auth_token = auth_token
+
+    def execute(self, sql: str, params=None) -> _HranaCursor:
+        import requests
+        from .turso_sync import _typed_arg
+        stmt = {"sql": sql}
+        if params:
+            stmt["args"] = [_typed_arg(p) for p in params]
+        resp = requests.post(
+            self._url,
+            headers={"Authorization": f"Bearer {self._auth_token}",
+                     "Content-Type": "application/json"},
+            json={"requests": [{"type": "execute", "stmt": stmt}, {"type": "close"}]},
+            timeout=90,
+        )
+        resp.raise_for_status()
+        result = resp.json()["results"][0]
+        if result.get("type") == "error":
+            raise ValueError(f"Turso HTTP query failed: {result['error']}")
+        res = result["response"]["result"]
+        cols = [c["name"] for c in res["cols"]]
+        rows = [tuple(_untype_hrana(cell) for cell in row) for row in res["rows"]]
+        return _HranaCursor(cols, rows)
+
+    def commit(self) -> None:
+        pass  # כל execute כבר מבוצע/מאושר מיידית (autocommit) בפרוטוקול הזה
+
+    def close(self) -> None:
+        pass  # אין session מתמשך לסגור
+
 
 def get_conn(db_path: Path | None = None):
     """מחזיר חיבור ל-Turso (מרוחק) אם TURSO_DATABASE_URL מוגדר; אחרת נופל
-    בחזרה לקובץ SQLite מקומי (כפי שהיה לפני המעבר). שתי הגרסאות תומכות
-    ב-execute/fetchall/fetchone/commit/close באותה חתימה (libsql הוא fork
-    ישיר של SQLite) - אך בניגוד ל-sqlite3, ל-libsql אין row_factory, ולכן
-    כל הפונקציות כאן ממירות שורות למילון בעצמן (ראו _rows/_row) במקום
-    להסתמך על sqlite3.Row - כך שאותו קוד עובד מול שני הגיבויים בלי הבדל."""
+    בחזרה לקובץ SQLite מקומי (כפי שהיה לפני המעבר). כל הגרסאות תומכות
+    ב-execute/fetchall/fetchone/commit/close באותה חתימה - אך בניגוד
+    ל-sqlite3, ל-Turso-HTTP אין row_factory, ולכן כל הפונקציות כאן ממירות
+    שורות למילון בעצמן (ראו _rows/_row) במקום להסתמך על sqlite3.Row -
+    כך שאותו קוד עובד מול שני הגיבויים בלי הבדל."""
     if config.TURSO_DATABASE_URL:
-        import libsql
-        # scheme https:// (לא libsql://) מכריח פרוטוקול Hrana-over-HTTP
-        # stateless (כמו zot/turso_sync.py: _run_batch) במקום חיבור
-        # WebSocket מתמשך - נבדק בפועל: האתר החי קרס שוב ושוב עם
-        # "Hrana: cursor error: ... unexpected EOF during chunk size line"
-        # גם אחרי שהשאילתות עצמן נעשו מהירות פי-6+ (ראו commit הקודם) -
-        # כלומר זה לא היה בעיית מהירות-שאילתה אלא בעיית-תעבורה בפרוטוקול
-        # ה-WebSocket-Hrana עצמו בסביבת הענן של Streamlit. הבקשות הישירות
-        # (requests, HTTP רגיל) ב-turso_sync.py מעולם לא נכשלו כך.
         url = config.TURSO_DATABASE_URL
         if url.startswith("libsql://"):
             url = "https://" + url[len("libsql://"):]
-        return libsql.connect(database=url, auth_token=config.TURSO_AUTH_TOKEN)
+        return _HranaConn(url, config.TURSO_AUTH_TOKEN)
     path = Path(db_path or config.DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"האינדקס לא נבנה עדיין: {path}")
@@ -322,9 +396,18 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         count_where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
         count_params.append(fts)
     if count_where:
+        # LIMIT בתוך ה-CTE עצמו (לפני ה-JOIN/COUNT) - נבדק בפועל: סינון
+        # רחב-מדי (למשל court_type='שלום' + טווח תאריכים, יחד ~548K
+        # התאמות מתוך 1.5M השורות) לא נפתר ע"י MATERIALIZED לבד - חייבים
+        # למסה בפועל כמעט חצי-מיליון שורות לפני שאפשר לספור/למיין אותן,
+        # ונמדד תלוי-שווין ל-83+ שניות (חורג מכל timeout סביר). תקרה של
+        # _BROAD_FILTER_CAP הופכת חיפוש רחב-חריג הזה למהיר (נבדק: ~2.4
+        # שניות) על חשבון דיוק מוחלט בקצה הרחוק - "5,000" מוצג במקום
+        # הספירה האמיתית (יכולה להיות מאות-אלפים) לחיפושים כאלה בלבד;
+        # חיפושים סלקטיביים רגילים (התאמות בפועל מתחת לתקרה) לא מושפעים כלל.
         count_clause = " AND ".join(count_where)
         total = conn.execute(
-            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {count_clause}) "
+            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {count_clause} LIMIT {_BROAD_FILTER_CAP}) "
             f"SELECT COUNT(*) FROM matches m JOIN verdicts v ON v.id = m.id WHERE {has_doc_cond.replace('verdicts.', 'v.')}",
             count_params,
         ).fetchone()[0]
@@ -351,9 +434,12 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         # המסוננים קודם - מכריח את אינדקס-הסינון, ורק אז ממיינים את
         # התוצאה הקטנה בהרבה. משתמשים ב-count_where/count_params שכבר
         # מחושבים למעלה (זהים בדיוק לתנאים שרוצים למסנן לפיהם כאן).
+        # אותה תקרה בדיוק כמו ב-COUNT למעלה (_BROAD_FILTER_CAP) ומאותה
+        # סיבה - ראו שם. total כבר מוגבל לאותה תקרה, אז pages (ב-app.py)
+        # לעולם לא יבקש offset מעבר למה שה-CTE הזה מכיל.
         clause = " AND ".join(count_where)
         cur = conn.execute(
-            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {clause}) "
+            f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {clause} LIMIT {_BROAD_FILTER_CAP}) "
             f"SELECT {cols} FROM matches JOIN verdicts ON verdicts.id = matches.id "
             f"WHERE {has_doc_cond} "
             f"ORDER BY {order} LIMIT ? OFFSET ?",
