@@ -25,7 +25,10 @@ def safe_db_call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except Exception as e:  # noqa: BLE001
         print(f"safe_db_call: {fn.__name__} failed: {type(e).__name__}: {e}")
-        st.error("אירעה תקלה זמנית בטעינת הנתונים. נסו לרענן את הדף בעוד רגע.")
+        # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
+        # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
+        st.error(f"אירעה תקלה זמנית בטעינת הנתונים ({fn.__name__}): "
+                 f"{type(e).__name__}: {e}")
         st.stop()
 
 st.set_page_config(page_title="גילוי נאות — חיפוש הליכים משפטיים",
@@ -281,7 +284,10 @@ def render_card(row, highlight_terms: list[str] | None = None, key_prefix: str =
         except Exception as e:  # noqa: BLE001
             print(f"render_card: failed to render verdict id={row['id']}: "
                   f"{type(e).__name__}: {e}")
-            st.caption("⚠️ אירעה תקלה בהצגת פסק הדין המלא. פרטי התיק שלמעלה עדיין תקינים.")
+            # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
+            # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
+            st.caption(f"⚠️ אירעה תקלה בהצגת פסק הדין המלא ({type(e).__name__}: {e}). "
+                       f"פרטי התיק שלמעלה עדיין תקינים.")
     else:
         st.caption("ℹ️ קובץ פסק הדין המלא אינו זמין במאגר המקומי (קיימים רק פרטי המטא-דאטה).")
 
@@ -330,18 +336,21 @@ def _cached_simple_search_meta():
                 [""] + search.court_type_options(),
                 [""] + search.court_city_options(),
                 [""] + search.distinct_proceedings(),
-                [""] + search.distinct_case_types())
+                [""] + search.distinct_case_types(), "")
     except Exception as e:  # noqa: BLE001
         print(f"_cached_simple_search_meta: failed: {type(e).__name__}: {e}")
-        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""], [""])
+        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""], [""],
+                f"{type(e).__name__}: {e}")
 
 
 def tab_simple():
     if not ensure_index_ui():
         return
-    ok, s, court_types, cities, proceedings, case_types = _cached_simple_search_meta()
+    ok, s, court_types, cities, proceedings, case_types, err = _cached_simple_search_meta()
     if not ok:
-        st.error("אירעה תקלה זמנית בטעינת נתוני החיפוש. נסו לרענן את הדף בעוד רגע.")
+        # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
+        # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
+        st.error(f"אירעה תקלה זמנית בטעינת נתוני החיפוש: {err}")
         return
     st.caption(f"במאגר: {s['with_documents']:,} החלטות")
 
