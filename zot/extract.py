@@ -595,6 +595,17 @@ _REP_COUNSEL_RE = re.compile(r"ע[\"'׳״]?\s*י\s*ב[\"'׳״]?\s*כ|על\s+יד
 # בגוף ההחלטה) ורלוונטיות (ח.פ של חברה לא מעניין ברמת הכותרת). מוסר
 # בכל מקום בתוך parties, לא רק בקצה - יכול להופיע אחרי כל צד בנפרד
 # ('X ת"ז ... נ' Y ת"ז ...').
+# 'ואח'' ('ואחרים') כפול ('שליט ואח' ואח'' נ' עיריית גבעתיים ואח'') - נמצא
+# בפועל בכותרות מסמכים אמיתיות (לא ארטיפקט חילוץ - הכפילות כבר בטקסט
+# המקור עצמו, כנראה שגיאת-הקלדה חוזרת של בית המשפט) - מכווץ לרצף יחיד
+# כי השני לא מוסיף מידע, רק מבלבל בתצוגה. מטפל גם ביותר משני חזרות.
+_DUP_ETC_RE = re.compile(r"(ואח[\"'׳])(?:\s+ואח[\"'׳])+")
+
+
+def dedupe_etc(text: str) -> str:
+    return _DUP_ETC_RE.sub(r"\1", text) if text else text
+
+
 _ID_NUMBER_RE = re.compile(
     r"\s*[,;]?\s*(?:ת[\"'׳״]?\.?\s*ז\.?|ח[\"'׳״]?\.?\s*פ\.?|חברות)\s*:?\s*\d[\d\-]{4,}"
 )
@@ -944,6 +955,7 @@ def extract_metadata(text: str) -> dict:
     if out["parties"]:
         p = _ID_NUMBER_RE.sub("", out["parties"])
         p = _REP_COUNSEL_TRAIL_RE.sub("", p)
+        p = dedupe_etc(p)
         out["parties"] = re.sub(r"\s+", " ", p).strip()
 
     out["judge"] = extract_judge(text)

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import config, storage
 from .case_types import normalize_case_type, proceeding_for_case_type
-from .extract import (_normalize_court, extract_decision_date, extract_judge,
+from .extract import (_normalize_court, dedupe_etc, extract_decision_date, extract_judge,
                       extract_metadata, filed_date_from_case, read_text)
 
 # חלק מהמסמכים (במיוחד PDF פגומים/חריגים, למשל תיקיית PediVerdicts בארכיון
@@ -435,7 +435,7 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
             relpath_pdf, relpath_docx = _relpaths(stem)
 
             rowid = _insert_verdict(conn, {
-                "case_number": case_number, "parties": cell(row, "parties"),
+                "case_number": case_number, "parties": dedupe_etc(cell(row, "parties")),
                 "court": _normalize_court(cell(row, "court")), "proceeding": cell(row, "proceeding"),
                 "case_type": normalize_case_type(cell(row, "case_type")), "matter": cell(row, "matter"),
                 "decision_type": cell(row, "decision_type"),
