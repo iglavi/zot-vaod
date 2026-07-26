@@ -7,7 +7,13 @@ import makeWASocket, {
   jidNormalizedUser,
   Browsers,
 } from "@whiskeysockets/baileys";
-import { config, isChatAllowed } from "./config.js";
+import {
+  config,
+  isChatAllowed,
+  TRIGGER_KEYWORDS,
+  HUMAN_NAMES,
+  CONTINUATION_WINDOW_MS,
+} from "./config.js";
 import { logger } from "./logger.js";
 import { messageBuffer } from "./messageBuffer.js";
 import { runTurn } from "./agent.js";
@@ -39,10 +45,23 @@ function getSenderName(msg) {
   return jid.split("@")[0];
 }
 
+// בדיקת טקסט זולה וחד-משמעית (startsWith) - לא ניחוש לפי הקשר.
+function startsWithTriggerKeyword(text) {
+  const trimmed = text.trim();
+  return TRIGGER_KEYWORDS.some((kw) => trimmed.startsWith(kw));
+}
+
+function startsWithHumanName(text) {
+  const trimmed = text.trim();
+  return HUMAN_NAMES.some((name) => trimmed.startsWith(name));
+}
+
 export async function startWhatsApp() {
   let stopped = false;
   let currentSock = null;
   const seenUnknownChats = new Set();
+  // chatId -> זמן (ms) של התשובה האחרונה של ליצי, לצורך חלון "המשך שיחה" קצר.
+  const lastBotReplyAt = new Map();
 
   async function connect() {
     const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
@@ -152,8 +171,16 @@ export async function startWhatsApp() {
     const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
     const isTagged = Boolean(botJid) && mentionedJids.some((j) => jidNormalizedUser(j) === botJid);
     const isAddressedByName = text.includes(config.botName);
+    const isKeywordTriggered = startsWithTriggerKeyword(text);
 
-    if (!isTagged && !isAddressedByName) {
+    const lastReplyAt = lastBotReplyAt.get(chatId);
+    const withinContinuationWindow =
+      Boolean(lastReplyAt) && Date.now() - lastReplyAt < CONTINUATION_WINDOW_MS;
+    const isContinuation = withinContinuationWindow && !startsWithHumanName(text);
+
+    const isAddressed = isTagged || isAddressedByName || isKeywordTriggered || isContinuation;
+
+    if (!isAddressed) {
       messageBuffer.add(chatId, { sender: senderName, text, timestamp: Date.now() });
       return;
     }
@@ -169,6 +196,7 @@ export async function startWhatsApp() {
       if (reply) {
         await sock.sendMessage(chatId, { text: reply });
         messageBuffer.add(chatId, { sender: config.botName, text: reply, timestamp: Date.now() });
+        lastBotReplyAt.set(chatId, Date.now());
       }
     } catch (err) {
       logger.error("שגיאה בקבלת תשובה מהסוכן:", err);
