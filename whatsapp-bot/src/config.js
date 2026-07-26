@@ -37,6 +37,13 @@ export const config = {
   messageBufferSize: Number(process.env.MESSAGE_BUFFER_SIZE || 200),
 
   reminderPollIntervalMs: Number(process.env.REMINDER_POLL_INTERVAL_MS || 20_000),
+
+  // דוא"ל: ליצי שולח/ת מתוך כתובת ה-Gmail הזו (אימות מול Gmail SMTP באמצעות App
+  // Password - לא הסיסמה הרגילה של החשבון). App Password מוצג עם רווחים לנוחות
+  // קריאה; מסירים אותם כאן כדי שלא ישפיעו על האימות מול השרת.
+  myEmail: (process.env.GMAIL_ADDRESS || "").trim(),
+  gmailAppPassword: (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, ""),
+  shaniEmail: (process.env.SHANI_EMAIL || "").trim(),
 };
 
 export function isChatAllowed(chatId) {

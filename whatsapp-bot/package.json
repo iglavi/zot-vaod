@@ -19,6 +19,7 @@
     "@whiskeysockets/baileys": "^6.7.23",
     "dotenv": "^17.4.2",
     "luxon": "^3.7.2",
+    "nodemailer": "^9.0.3",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"
   }

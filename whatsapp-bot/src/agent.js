@@ -4,6 +4,7 @@ import { JsonStore } from "./store.js";
 import { logger } from "./logger.js";
 import { scheduleReminder } from "./reminders.js";
 import { readMemory, applyMemoryUpdate, isOverLimit, MEMORY_WORD_LIMIT } from "./memory.js";
+import { sendEmail } from "./email.js";
 import { DateTime } from "luxon";
 
 const client = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -111,6 +112,14 @@ async function handleCustomToolUse(chatId, event) {
       case "update_memory": {
         const result = applyMemoryUpdate(chatId, event.input);
         return { text: result, isError: false };
+      }
+      case "send_email": {
+        const { to, subject, body } = event.input || {};
+        const result = await sendEmail({ to, subject, body });
+        return {
+          text: `המייל נשלח בהצלחה אל ${result.recipients.join(", ")}.`,
+          isError: false,
+        };
       }
       default:
         return { text: `שגיאה: כלי לא מוכר: ${event.name}`, isError: true };
