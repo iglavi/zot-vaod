@@ -1,0 +1,24 @@
+{
+  "name": "litzi-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "בוט וואטסאפ (\"ליצי\") שמחבר קבוצות משפחתיות ל-Claude Managed Agent, כולל תזכורות מתוזמנות.",
+  "type": "module",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "setup:agent": "node scripts/setup-agent.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "dotenv": "^17.4.2",
+    "luxon": "^3.7.2",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
