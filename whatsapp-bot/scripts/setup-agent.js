@@ -6,7 +6,7 @@
 
 import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
-import { SCHEDULE_REMINDER_TOOL } from "../src/agent.js";
+import { SYSTEM_PROMPT, AGENT_TOOLS } from "../src/agentConfig.js";
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {
@@ -25,21 +25,6 @@ if ((process.env.AGENT_ID || process.env.ENVIRONMENT_ID) && !process.env.FORCE_R
 
 const client = new Anthropic({ apiKey });
 
-const SYSTEM_PROMPT = `את/ה "ליצי" - עוזר/ת משפחתי/ת בקבוצות וואטסאפ, כולל בין השאר קבוצות עם יגאל ושני.
-
-איך לנהוג:
-- עני/ה תמיד בעברית בלבד, בטון חם, קליל וממוקד. בלי הקדמות מיותרות ("בטח!", "כמובן!") - ישר לעניין.
-- כל הודעה שמגיעה אליך מתחילה בשורת "[תאריך ושעה נוכחיים: ...]" ולאחריה "[הקשר קבוצתי אחרון]" -
-  תמליל של ההודעות האחרונות בקבוצה (לא בהכרח פנייה אליך, רק רקע). השתמשי בהקשר הזה כשמבקשים ממך
-  סיכום של מה שדובר, אבל אל תתייחסי אליו כאילו כל שורה שם מיועדת לך.
-- אחרי זה מופיעה השורה "[ההודעה הבאה מופנית אליך ישירות]" ואז ההודעה שבאמת צריך לענות עליה.
-- כשמבקשים ממך לקבוע תזכורת (למשל "תזכיר/י ביום רביעי ב-18:00 להביא עוגה") - חשבי מה התאריך
-  הקרוב המתאים ליום שצוין (בהתבסס על התאריך הנוכחי שמופיע בהודעה) והשתמשי בכלי schedule_reminder
-  כדי לקבוע אותה. לאחר קביעת התזכורת, אשרי בקצרה לקבוצה מתי היא תישלח.
-- אם מבקשים תזכורת בלי לציין שעה, בררי או הניחי שעה סבירה (למשל 09:00) ואמרי זאת בבירור בתשובה.
-- שמרי על תשובות קצרות וממוקדות - זו קבוצת וואטסאפ משפחתית, לא מסמך רשמי.
-- אין לך גישה לקבצים, קוד או אינטרנט חיצוני מעבר לחיפוש רשת אם הופעל עבורך - השתמשי בו רק כשבאמת נדרש מידע עדכני.`;
-
 async function main() {
   console.log("יוצר Environment...");
   const environment = await client.beta.environments.create({
@@ -54,20 +39,10 @@ async function main() {
   console.log("יוצר Agent...");
   const agent = await client.beta.agents.create({
     name: "ליצי - בוט משפחתי",
-    description: "בוט וואטסאפ משפחתי שעונה כשפונים אליו בשם וקובע תזכורות.",
+    description: "בוט וואטסאפ משפחתי שעונה כשפונים אליו בשם, קובע תזכורות וזוכר עובדות משפחתיות.",
     model: "claude-opus-5",
     system: SYSTEM_PROMPT,
-    tools: [
-      SCHEDULE_REMINDER_TOOL,
-      {
-        type: "agent_toolset_20260401",
-        default_config: { enabled: false },
-        configs: [
-          { name: "web_search", enabled: true },
-          { name: "web_fetch", enabled: true },
-        ],
-      },
-    ],
+    tools: AGENT_TOOLS,
   });
   console.log(`Agent נוצר: ${agent.id} (גרסה ${agent.version})`);
 

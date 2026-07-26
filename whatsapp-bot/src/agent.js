@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { JsonStore } from "./store.js";
 import { logger } from "./logger.js";
 import { scheduleReminder } from "./reminders.js";
+import { readMemory, applyMemoryUpdate, isOverLimit, MEMORY_WORD_LIMIT } from "./memory.js";
 import { DateTime } from "luxon";
 
 const client = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -19,6 +20,37 @@ function storeSessionId(chatId, sessionId) {
   const sessions = sessionsStore.get("sessions", {});
   sessions[chatId] = sessionId;
   sessionsStore.set("sessions", sessions);
+}
+
+/**
+ * session קיים "נעול" על גרסת הסוכן שאיתה נוצר, ולכן שינוי בהגדרת הסוכן (כלי חדש,
+ * system prompt מעודכן) לא מגיע אליו. בעליית התהליך בודקים פעם אחת מהי גרסת הסוכן
+ * הנוכחית; אם היא שונה ממה ששמור אצלנו - מאפסים את מיפוי ה-sessions, כך שכל קבוצה
+ * תקבל session חדש עם הגרסה העדכנית בפנייה הבאה אליה.
+ */
+let agentVersionChecked = null;
+async function ensureSessionsMatchAgentVersion() {
+  if (!agentVersionChecked) {
+    agentVersionChecked = (async () => {
+      try {
+        const agent = await client.beta.agents.retrieve(config.agentId);
+        const currentVersion = String(agent.version);
+        const storedVersion = sessionsStore.get("agentVersion", null);
+        if (storedVersion !== currentVersion) {
+          if (storedVersion !== null) {
+            logger.info(
+              `זוהתה גרסת סוכן חדשה (${storedVersion} -> ${currentVersion}) - מאפס sessions כדי שהקבוצות יקבלו את ההגדרות המעודכנות.`
+            );
+          }
+          sessionsStore.set("sessions", {});
+          sessionsStore.set("agentVersion", currentVersion);
+        }
+      } catch (err) {
+        logger.warn("בדיקת גרסת הסוכן נכשלה (ממשיכים עם ה-sessions הקיימים):", err.message);
+      }
+    })();
+  }
+  return agentVersionChecked;
 }
 
 async function createSession(chatId) {
@@ -38,64 +70,67 @@ async function getOrCreateSessionId(chatId) {
   return createSession(chatId);
 }
 
-export const SCHEDULE_REMINDER_TOOL = {
-  type: "custom",
-  name: "schedule_reminder",
-  description:
-    "קביעת תזכורת עתידית שתישלח לקבוצת הוואטסאפ הזו בתאריך ובשעה שצוינו. " +
-    "יש להשתמש בכלי הזה בכל פעם שמבקשים ממך לתזכיר משהו בעתיד (לדוגמה 'תזכיר ביום רביעי ב-18:00 להביא עוגה'). " +
-    "עליך לחשב את התאריך הקרוב המתאים (בפורמט YYYY-MM-DD) על סמך התאריך הנוכחי שמופיע בהודעה, ואת השעה בפורמט 24 שעות HH:mm.",
-  input_schema: {
-    type: "object",
-    properties: {
-      date: { type: "string", description: "תאריך התזכורת, בפורמט YYYY-MM-DD" },
-      time: { type: "string", description: "שעת התזכורת, בפורמט 24 שעות HH:mm" },
-      message: { type: "string", description: "תוכן התזכורת שיישלח לקבוצה בהגיע הזמן" },
-    },
-    required: ["date", "time", "message"],
-  },
-};
-
-function buildUserMessage({ transcript, senderName, text }) {
+function buildUserMessage({ chatId, transcript, senderName, text }) {
   const now = DateTime.now().setZone(config.timezone);
   const nowLabel = now.setLocale("he").toFormat("cccc, d/L/yyyy HH:mm");
-  return [
+
+  const memory = readMemory(chatId);
+  const parts = [
     `[תאריך ושעה נוכחיים: ${nowLabel}, אזור זמן ${config.timezone}]`,
+    "[זיכרון ארוך-טווח של הקבוצה - עובדות שנשמרו משיחות קודמות]:",
+    memory.trim() || "(הזיכרון עדיין ריק)",
+  ];
+
+  if (isOverLimit(chatId)) {
+    parts.push(
+      `[שים לב: קובץ הזיכרון חורג ממגבלת ${MEMORY_WORD_LIMIT} המילים - אחרי שתעני על ההודעה, ` +
+        "דחסי אותו באמצעות update_memory עם action=rewrite, תוך שמירה על כל המידע החשוב]"
+    );
+  }
+
+  parts.push(
+    "",
     "[הקשר קבוצתי אחרון - רק לצורך רקע, אין צורך להתייחס לכל שורה]:",
     transcript,
     "",
     "[ההודעה הבאה מופנית אליך ישירות]:",
-    `${senderName}: ${text}`,
-  ].join("\n");
+    `${senderName}: ${text}`
+  );
+
+  return parts.join("\n");
 }
 
 async function handleCustomToolUse(chatId, event) {
-  if (event.name !== "schedule_reminder") {
-    return { type: "text", text: `שגיאה: כלי לא מוכר: ${event.name}`, isError: true };
-  }
   try {
-    const { date, time, message } = event.input || {};
-    const reminder = scheduleReminder({ chatId, date, time, message });
-    return {
-      type: "text",
-      text: `התזכורת נקבעה בהצלחה ל-${reminder.dueAtIso}.`,
-      isError: false,
-    };
+    switch (event.name) {
+      case "schedule_reminder": {
+        const { date, time, message } = event.input || {};
+        const reminder = scheduleReminder({ chatId, date, time, message });
+        return { text: `התזכורת נקבעה בהצלחה ל-${reminder.dueAtIso}.`, isError: false };
+      }
+      case "update_memory": {
+        const result = applyMemoryUpdate(chatId, event.input);
+        return { text: result, isError: false };
+      }
+      default:
+        return { text: `שגיאה: כלי לא מוכר: ${event.name}`, isError: true };
+    }
   } catch (err) {
-    logger.error("שגיאה בקביעת תזכורת דרך הסוכן:", err);
-    return { type: "text", text: `שגיאה בקביעת התזכורת: ${err.message}`, isError: true };
+    logger.error(`שגיאה בהפעלת הכלי ${event.name}:`, err);
+    return { text: `שגיאה בהפעלת ${event.name}: ${err.message}`, isError: true };
   }
 }
 
 /**
  * מריץ "תור" אחד מול ה-Managed Agent של הקבוצה: פותח stream, שולח הודעת משתמש (כולל
- * הקשר רקע), מטפל בקריאות לכלי התזכורת אם יש, וממתין לתשובה הסופית של הסוכן.
- * מחזיר את טקסט התשובה שיש לשלוח בחזרה לקבוצה.
+ * זיכרון ארוך-טווח והקשר רקע), מטפל בקריאות לכלים (תזכורות, זיכרון) אם יש, וממתין
+ * לתשובה הסופית של הסוכן. מחזיר את טקסט התשובה שיש לשלוח בחזרה לקבוצה.
  */
 export async function runTurn(chatId, { senderName, text, transcript }) {
+  await ensureSessionsMatchAgentVersion();
   let sessionId = await getOrCreateSessionId(chatId);
 
-  const userMessage = buildUserMessage({ transcript, senderName, text });
+  const userMessage = buildUserMessage({ chatId, transcript, senderName, text });
 
   const runOnce = async (sid) => {
     const stream = await client.beta.sessions.events.stream(sid);
