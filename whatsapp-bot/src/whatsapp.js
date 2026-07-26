@@ -188,8 +188,19 @@ export async function startWhatsApp() {
       await currentSock.sendMessage(chatId, { text });
       messageBuffer.add(chatId, { sender: config.botName, text, timestamp: Date.now() });
     },
-    stop: () => {
+    stop: async () => {
       stopped = true;
+      // סגירה מסודרת של חיבור הוואטסאפ (במקום שהתהליך פשוט ייהרג) - בלי זה, וואטסאפ
+      // עלול לראות את זה כניתוק "מלוכלך" ולסרב לחיבור החוזר הבא (session conflict / נותקת).
+      if (currentSock) {
+        try {
+          currentSock.end(undefined);
+        } catch (err) {
+          logger.warn("שגיאה בסגירה מסודרת של חיבור הוואטסאפ:", err);
+        }
+      }
+      // רגע קטן כדי לתת ל"פריים" הסגירה לצאת בפועל ברשת לפני שהתהליך נסגר.
+      await new Promise((resolve) => setTimeout(resolve, 500));
     },
   };
 }

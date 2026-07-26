@@ -31,10 +31,10 @@ async function main() {
   const whatsapp = await startWhatsApp();
   const stopReminders = startReminderScheduler(whatsapp.sendToChat);
 
-  const shutdown = (signal) => {
+  const shutdown = async (signal) => {
     logger.info(`מתקבל ${signal}, נסגר בצורה מסודרת...`);
     stopReminders();
-    whatsapp.stop();
+    await whatsapp.stop();
     process.exit(0);
   };
 
