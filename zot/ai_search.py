@@ -204,6 +204,59 @@ def _fts_from_terms(terms: list[str]) -> str:
     return " OR ".join(f'"{t}"' for t in seen)
 
 
+# מילים פרוצדורליות גנריות שמופיעות כמעט בכל מסמך משפטי (לא ייחודיות
+# לשום נושא) - כשמונח כזה מגיע כמילה בודדת (לא כחלק מביטוי רב-מילים,
+# שאז הוא כבר ספציפי) ויש עוד מונחי-נושא אמיתיים לצידו, הוא רק "בולע"
+# את קבוצת ה-OR בלי להוסיף שום סינון (נבדק בפועל: 'תביעה' לצד 'עיריית
+# תל אביב'+'ארנונה' נתן 122,756 תוצאות ל'תביעות ארנונה נגד עיריית תל
+# אביב' - שאלה שאמורה להיות צרה בהרבה). לא מסננים אם זה המונח היחיד
+# שנשאר (עדיף איזשהו סינון גנרי על פני ריקון search_terms לגמרי).
+_GENERIC_STANDALONE_TERMS = {
+    "תביעה", "תביעות", "בקשה", "בקשות", "החלטה", "החלטות", "פסק", "דין",
+    "ערעור", "ערעורים", "עתירה", "עתירות", "הליך", "הליכים",
+}
+
+
+def _drop_generic_standalone(terms: list[str]) -> list[str]:
+    filtered = [t for t in terms if t.strip() not in _GENERIC_STANDALONE_TERMS]
+    return filtered if filtered else terms
+
+
+def _fts_and_groups(*term_lists: list[str]) -> str:
+    """מחבר כמה קבוצות-מונחים ב-AND ביניהן (כל קבוצה חייבת להתקיים),
+    כשבתוך כל קבוצה המונחים מחוברים ב-OR (ראו _fts_from_terms) - כלומר
+    'איזושהי ניסוח של הנושא' וגם 'איזשהו ניסוח של הצד' וגם 'השופט',
+    לא רק 'משהו מכל הרשימה'.
+
+    בלי ההפרדה הזו (כפי שהיה קודם: כל המונחים מכל השדות ב-OR ביחד אחד),
+    שאלה כמו 'כמה תיקים יש נגד מדינת ישראל בנושא הפקעת קרקעות' (search_
+    terms=['הפקעת קרקעות', 'מדינת ישראל'], parties=['מדינת ישראל'])
+    התאימה לכל תיק שמכיל את המילה 'מדינת ישראל' *או* את הביטוי 'הפקעת
+    קרקעות' - וכיוון ש'מדינת ישראל' מופיע כצד כמעט בכל תיק פלילי/מנהלי
+    במאגר, המונח הכללי הזה 'בלע' את החיפוש כולו: 216,351 תוצאות במקום
+    מספר סביר לנושא ספציפי. עם AND בין הקבוצות: רק תיקים שגם מכילים
+    ניסוח כלשהו של הנושא *וגם* מכילים את הצד הנדרש. ראו בדיקה בשיחה.
+
+    seen-גלובלי (לא רק לפי קבוצה) כי analyze_query לפעמים כותב אותו שם
+    גם ב-search_terms וגם ב-parties (כפילות, כמו בדוגמה למעלה) - קבוצה
+    שכל המונחים בה כבר נתפסו הייתה נעלמת (ריקה) מבלי לדרוש כלום. הסדר
+    של term_lists קובע מי "זוכה" במונח משותף - לכן קוראים לפונקציה עם
+    parties/judge (הספציפיים והחשובים-לדרוש) *לפני* search_terms (הנושא
+    הכללי, שאמור להישאר עם הניסוחים הנוספים שלו גם בלי הצד שכבר נדרש
+    בנפרד) - ראו סדר הקריאה ב-retrieve()."""
+    seen_global: set[str] = set()
+    groups: list[str] = []
+    for terms in term_lists:
+        fresh = [t for t in terms if t and t not in seen_global]
+        if not fresh:
+            continue
+        seen_global.update(fresh)
+        g = _fts_from_terms(fresh)
+        if g:
+            groups.append(f"({g})")
+    return " AND ".join(groups)
+
+
 def analyze_query(client, question: str, today: str | None = None,
                   history: list[dict] | None = None) -> dict:
     """שלב 1: הפיכת שאלה חופשית למילות חיפוש + טווח תאריכים.
@@ -323,10 +376,10 @@ def retrieve(analysis: dict):
 
     court_names = search._courts_matching(court_type, "") if court_type else None
 
-    all_terms = list(analysis.get("search_terms", [])) + list(analysis.get("parties", []))
-    if analysis.get("judge"):
-        all_terms.append(analysis["judge"])
-    fts = _fts_from_terms(all_terms)
+    judge_terms = [analysis["judge"]] if analysis.get("judge") else []
+    party_terms = list(analysis.get("parties", []))
+    topic_terms = _drop_generic_standalone(list(analysis.get("search_terms", [])))
+    fts = _fts_and_groups(party_terms, judge_terms, topic_terms)
     verdicts = search.retrieve_for_ai(
         fts_query=fts, court_scope=court_scope, court_names=court_names,
         date_from=date_from, date_to=date_to,
