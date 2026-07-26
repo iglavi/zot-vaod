@@ -5,6 +5,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   DisconnectReason,
   jidNormalizedUser,
+  Browsers,
 } from "@whiskeysockets/baileys";
 import { config, isChatAllowed } from "./config.js";
 import { logger } from "./logger.js";
@@ -52,34 +53,42 @@ export async function startWhatsApp() {
       auth: state,
       logger: baileysLogger,
       printQRInTerminal: false,
-      browser: ["ליצי", "Chrome", "1.0.0"],
+      // חתימת דפדפן "מוכרת" (במקום מחרוזת מותאמת אישית) - יציבה יותר עבור זרימת קוד ההתאמה.
+      browser: Browsers.ubuntu("Chrome"),
     });
     currentSock = sock;
 
-    if (!sock.authState.creds.registered) {
-      if (!config.whatsappPhoneNumber) {
-        logger.error(
-          "אין עדיין חיבור לוואטסאפ ולא הוגדר WHATSAPP_PHONE_NUMBER. הגדירו את משתנה הסביבה ואתחלו מחדש."
-        );
-      } else {
-        setTimeout(async () => {
-          try {
-            const code = await sock.requestPairingCode(config.whatsappPhoneNumber);
-            logger.info("=".repeat(50));
-            logger.info(`קוד ההתאמה (Pairing Code) שלך: ${code}`);
-            logger.info("בטלפון: הגדרות -> מכשירים מקושרים -> קישור מכשיר -> קישור עם מספר טלפון, והזינו את הקוד.");
-            logger.info("=".repeat(50));
-          } catch (err) {
-            logger.error("קבלת קוד ההתאמה נכשלה:", err);
-          }
-        }, 3000);
-      }
+    if (!sock.authState.creds.registered && !config.whatsappPhoneNumber) {
+      logger.error(
+        "אין עדיין חיבור לוואטסאפ ולא הוגדר WHATSAPP_PHONE_NUMBER. הגדירו את משתנה הסביבה ואתחלו מחדש."
+      );
     }
+
+    let pairingCodeRequested = false;
 
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, qr } = update;
+
+      // בדיוק כמו בדוגמה הרשמית של Baileys: מבקשים קוד התאמה רק כשהסוקט מאותת
+      // שהוא מוכן לכך (אירוע qr), ולא בטיימר שרירותי - כדי לא "לפספס" את חלון הזמן הנכון.
+      if (qr && config.whatsappPhoneNumber && !sock.authState.creds.registered && !pairingCodeRequested) {
+        pairingCodeRequested = true;
+        sock
+          .requestPairingCode(config.whatsappPhoneNumber)
+          .then((code) => {
+            logger.info("=".repeat(50));
+            logger.info(`קוד ההתאמה (Pairing Code) שלך: ${code}`);
+            logger.info("בטלפון: הגדרות -> מכשירים מקושרים -> קישור מכשיר -> קישור עם מספר טלפון, והזינו את הקוד.");
+            logger.info("=".repeat(50));
+          })
+          .catch((err) => {
+            pairingCodeRequested = false;
+            logger.error("קבלת קוד ההתאמה נכשלה:", err);
+          });
+      }
+
       if (connection === "open") {
         logger.info("החיבור לוואטסאפ פעיל ✅");
       } else if (connection === "close") {
