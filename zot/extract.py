@@ -867,7 +867,7 @@ def _normalize_court(raw: str) -> str:
                     # מקפים -> רווח, לעקביות עם הכינוי הקנוני הנהוג בכל
                     # שאר בתי המשפט באותה עיר (למשל 'נוף הגליל נצרת', לא
                     # 'נוף הגליל-נצרת') — אחרת אותה עיר נספרת כשני ערכים.
-                    city = re.sub(r"\s*[-–]\s*", " ", city).strip()
+                    city = re.sub(r"\s*[-–־]\s*", " ", city).strip()
                     return "בית משפט לעניינים מנהליים ב" + city
             s = x_part
     elif _JUNK_COURT_RE.search(s) or len(s) > 40 or re.search(r"\d", s):
@@ -875,7 +875,10 @@ def _normalize_court(raw: str) -> str:
     s = _HEB_DATE_PREFIX_RE.split(s)[0]
     s = _SHALOM_TRAFFIC_RE.sub(r"\1\2", s)
     s = _BRACKETS_RE.sub("", s)
-    s = re.sub(r"\s*[-–]\s*", " ", s)
+    # מקף עברי (מקף-נסתר, U+05BE) מתנהג ויזואלית כמו מקף רגיל אבל הוא תו
+    # שונה - בלעדיו כאן, 'תל־אביב' (עם המקף העברי) לא מתאחד עם כל שאר
+    # ההופעות של 'תל אביב' (עם רווח רגיל), ומתפצל לערך-עיר נפרד בטעות.
+    s = re.sub(r"\s*[-–־]\s*", " ", s)
     s = re.sub(r"\s+בהליך\s*$", "", s)
     s = re.sub(r"\s+", " ", s).strip(" '\"׳״;:.,]})|+")
     if s in ("בית המשפט", "בית משפט") or _KAMA_RE.match(s):
