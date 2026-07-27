@@ -38,6 +38,16 @@ export const config = {
 
   reminderPollIntervalMs: Number(process.env.REMINDER_POLL_INTERVAL_MS || 20_000),
 
+  // רשימה לבנה של chatId ש"משודרגים": מכסת זיכרון ארוך-טווח מוגדלת (ראו memory.js)
+  // בתוספת הנחיות התנהגות שונות (ראו ENHANCED_GROUP_INSTRUCTIONS ב-agentConfig.js) -
+  // לדוגמה קבוצה אישית שמשמשת לתחום עתיר-תוכן (כמו מחקר לדוקטורט), ולא רק סיכום
+  // משפחתי קליל שמסתפק בהתנהגות הרגילה.
+  enhancedChatIds: (process.env.ENHANCED_CHAT_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  enhancedMemoryWordLimit: Number(process.env.ENHANCED_MEMORY_WORD_LIMIT || 8000),
+
   // דוא"ל: ליצי שולח/ת מתוך כתובת ה-Gmail הזו (אימות מול Gmail SMTP באמצעות App
   // Password - לא הסיסמה הרגילה של החשבון). App Password מוצג עם רווחים לנוחות
   // קריאה; מסירים אותם כאן כדי שלא ישפיעו על האימות מול השרת.

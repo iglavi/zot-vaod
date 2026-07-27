@@ -4,7 +4,12 @@ import { config } from "./config.js";
 import { logger } from "./logger.js";
 
 // מגבלת גודל רכה לקובץ זיכרון של קבוצה. כשחורגים ממנה, מבקשים מהסוכן לדחוס.
+// קבוצות ב-ENHANCED_CHAT_IDS מקבלות מכסה מוגדלת (config.enhancedMemoryWordLimit).
 export const MEMORY_WORD_LIMIT = 2000;
+
+export function getMemoryWordLimit(chatId) {
+  return config.enhancedChatIds.includes(chatId) ? config.enhancedMemoryWordLimit : MEMORY_WORD_LIMIT;
+}
 
 function memoryFilePath(chatId) {
   // מזהה קבוצה כמו 120363297880685416@g.us הופך לשם קובץ בטוח.
@@ -32,7 +37,7 @@ export function countWords(text) {
 }
 
 export function isOverLimit(chatId) {
-  return countWords(readMemory(chatId)) > MEMORY_WORD_LIMIT;
+  return countWords(readMemory(chatId)) > getMemoryWordLimit(chatId);
 }
 
 /**
@@ -87,10 +92,11 @@ export function applyMemoryUpdate(chatId, input) {
   const words = countWords(next);
   logger.info(`עודכן זיכרון לקבוצה ${chatId} (פעולה: ${action}, ${words} מילים)`);
 
+  const wordLimit = getMemoryWordLimit(chatId);
   let result = `הזיכרון עודכן בהצלחה (${words} מילים בקובץ).`;
-  if (words > MEMORY_WORD_LIMIT) {
+  if (words > wordLimit) {
     result +=
-      ` שים לב: הקובץ חורג ממגבלת ${MEMORY_WORD_LIMIT} המילים - ` +
+      ` שים לב: הקובץ חורג ממגבלת ${wordLimit} המילים - ` +
       `דחוס אותו בהקדם באמצעות update_memory עם action=rewrite, תוך שמירה על כל המידע החשוב.`;
   }
   return result;

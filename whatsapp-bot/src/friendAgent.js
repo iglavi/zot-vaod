@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { scheduleReminder } from "./reminders.js";
-import { readMemory, applyMemoryUpdate, isOverLimit, MEMORY_WORD_LIMIT } from "./memory.js";
+import { readMemory, applyMemoryUpdate, isOverLimit, getMemoryWordLimit } from "./memory.js";
 import { mediaToContentBlocks } from "./mediaContent.js";
 import { createSessionRuntime } from "./agentRuntime.js";
 import { DateTime } from "luxon";
@@ -30,7 +30,7 @@ function buildFriendUserMessage({ chatId, text, hasMedia }) {
 
   if (isOverLimit(chatId)) {
     parts.push(
-      `[שים לב: קובץ הזיכרון חורג ממגבלת ${MEMORY_WORD_LIMIT} המילים - אחרי שתעני על ההודעה, ` +
+      `[שים לב: קובץ הזיכרון חורג ממגבלת ${getMemoryWordLimit(chatId)} המילים - אחרי שתעני על ההודעה, ` +
         "דחסי אותו באמצעות update_memory עם action=rewrite, תוך שמירה על כל המידע החשוב]"
     );
   }
