@@ -22,6 +22,17 @@ function assertReadyToRun() {
       "ALLOWED_CHAT_IDS ריק - הבוט יתעלם מכל הקבוצות עד שתוסיפו לשם את מזהי הקבוצות המורשות."
     );
   }
+
+  const friendMissing = [];
+  if (!config.friendAgentId) friendMissing.push("FRIEND_AGENT_ID");
+  if (!config.friendEnvironmentId) friendMissing.push("FRIEND_ENVIRONMENT_ID");
+  if (!config.friendAllowedNumber) friendMissing.push("FRIEND_ALLOWED_NUMBER");
+  if (friendMissing.length > 0) {
+    logger.warn(
+      `סוכן "${config.friendBotName}" (שיחה פרטית) לא מוגדר במלואו - חסרים: ${friendMissing.join(", ")}. ` +
+        "הודעות פרטיות פשוט יתעלמו עד שיוגדרו."
+    );
+  }
 }
 
 async function main() {

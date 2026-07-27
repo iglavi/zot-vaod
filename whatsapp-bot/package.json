@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node src/index.js",
     "setup:agent": "node scripts/setup-agent.js",
-    "update:agent": "node scripts/update-agent.js"
+    "update:agent": "node scripts/update-agent.js",
+    "update:friend-agent": "node scripts/update-friend-agent.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -19,6 +20,7 @@
     "@whiskeysockets/baileys": "^6.7.23",
     "dotenv": "^17.4.2",
     "luxon": "^3.7.2",
+    "mammoth": "^1.12.0",
     "nodemailer": "^9.0.3",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"

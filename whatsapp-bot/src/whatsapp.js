@@ -1,5 +1,6 @@
 import { Boom } from "@hapi/boom";
 import pino from "pino";
+import mammoth from "mammoth";
 import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
@@ -18,6 +19,7 @@ import {
 import { logger } from "./logger.js";
 import { messageBuffer } from "./messageBuffer.js";
 import { runTurn } from "./agent.js";
+import { runFriendTurn } from "./friendAgent.js";
 
 // לוגר "שקט" עבור Baileys עצמו - הלוגים היישומיים שלנו עוברים דרך logger.js.
 const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
@@ -40,8 +42,10 @@ function briefMediaNote(message) {
   return null;
 }
 
-// סוגי קבצים שהסוכן יכול "לראות" בפועל (Claude תומך בתמונות ומסמכי PDF, לא בווידאו/אודיו).
+// סוגי קבצים שהסוכן יכול "לראות" בפועל (תמונות ו-PDF מצורפים כמו שהם; Word מחולץ
+// לטקסט - Claude לא קורא קובצי docx גולמיים. וידאו/אודיו/מדבקות/doc ישן אינם נתמכים).
 const SUPPORTED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const MAX_MEDIA_BYTES = 15 * 1024 * 1024; // מגבלה נדיבה כדי לא לשלוח קבצים ענקיים לסוכן
 
 function getSupportedMediaKind(message) {
@@ -53,10 +57,13 @@ function getSupportedMediaKind(message) {
   if (documentMimetype === "application/pdf") {
     return { kind: "document", mimeType: documentMimetype };
   }
+  if (documentMimetype === DOCX_MIME_TYPE) {
+    return { kind: "docx", mimeType: documentMimetype };
+  }
   return null;
 }
 
-/** מוריד תמונה/PDF נתמכים מהודעת וואטסאפ ומחזיר תוכן ב-base64, מוכן לצירוף להודעה לסוכן. */
+/** מוריד תמונה/PDF/Word נתמכים מהודעת וואטסאפ, ומחזיר תוכן מוכן לצירוף להודעה לסוכן. */
 async function downloadSupportedMedia(sock, msg) {
   const info = getSupportedMediaKind(msg.message);
   if (!info) return null;
@@ -70,6 +77,16 @@ async function downloadSupportedMedia(sock, msg) {
       logger.warn(`קובץ שהתקבל גדול מדי (${buffer.byteLength} bytes) - מדלגים על צירוף לסוכן`);
       return null;
     }
+
+    if (info.kind === "docx") {
+      const { value: text } = await mammoth.extractRawText({ buffer });
+      if (!text.trim()) {
+        logger.warn("לא נמצא טקסט לחילוץ מקובץ ה-Word");
+        return null;
+      }
+      return { kind: "docx-text", text };
+    }
+
     return { kind: info.kind, mimeType: info.mimeType, base64: buffer.toString("base64") };
   } catch (err) {
     logger.error("הורדת קובץ מוואטסאפ נכשלה:", err);
@@ -183,6 +200,12 @@ export async function startWhatsApp() {
   async function handleIncomingMessage(sock, msg) {
     const chatId = msg.key.remoteJid;
     if (!chatId || chatId === "status@broadcast") return;
+    if (msg.key.fromMe) return;
+
+    if (chatId.endsWith("@s.whatsapp.net")) {
+      return handlePrivateMessage(sock, msg, chatId);
+    }
+
     if (!isChatAllowed(chatId)) {
       // מזהה קבוצה שעדיין לא ברשימה המורשית - מדפיסים פעם אחת ללוג כדי שיהיה קל להעתיק
       // אותו ל-ALLOWED_CHAT_IDS (זו הדרך הפשוטה ביותר לגלות מהו ה-JID של קבוצה).
@@ -194,7 +217,6 @@ export async function startWhatsApp() {
       }
       return;
     }
-    if (msg.key.fromMe) return;
 
     const text = extractMessageText(msg.message) || "";
     const hasSupportedMedia = Boolean(getSupportedMediaKind(msg.message));
@@ -249,6 +271,38 @@ export async function startWhatsApp() {
       await sock
         .sendMessage(chatId, { text: "סליחה, נתקלתי בשגיאה 🙏 נסו שוב בעוד רגע." })
         .catch(() => {});
+    } finally {
+      await sock.sendPresenceUpdate("paused", chatId).catch(() => {});
+    }
+  }
+
+  /**
+   * שיחה פרטית (DM, לא קבוצה) - מנותבת לגמרי לסוכן "חבר", נפרד מליצי.
+   *
+   * אבטחה קריטית: רק chatId שהוא בדיוק המספר המורשה (FRIEND_ALLOWED_NUMBER) מטופל.
+   * כל שיחה פרטית ממספר אחר - מתעלמים לגמרי, בלי שום תגובה ובלי לוג שיכול לחשוף
+   * שהבוט בכלל "קיים" עבור מספרים לא מורשים.
+   */
+  async function handlePrivateMessage(sock, msg, chatId) {
+    if (!config.friendAllowedNumber) return; // לא הוגדר - אין למי לענות, שקט מוחלט
+
+    const allowedJid = `${config.friendAllowedNumber}@s.whatsapp.net`;
+    if (chatId !== allowedJid) return; // שקט מוחלט - גם לא לוג
+
+    const text = extractMessageText(msg.message) || "";
+    const hasSupportedMedia = Boolean(getSupportedMediaKind(msg.message));
+    if (!text && !hasSupportedMedia) return; // למשל סטיקר/וידאו בלי טקסט - אין מה להעביר
+
+    logger.info(`[${config.friendBotName}] פנייה פרטית: ${text || "(קובץ מצורף)"}`);
+    const media = hasSupportedMedia ? await downloadSupportedMedia(sock, msg) : null;
+
+    try {
+      await sock.sendPresenceUpdate("composing", chatId).catch(() => {});
+      const reply = await runFriendTurn(chatId, { text, media });
+      if (reply) await sock.sendMessage(chatId, { text: reply });
+    } catch (err) {
+      logger.error(`שגיאה בקבלת תשובה מסוכן ${config.friendBotName}:`, err);
+      await sock.sendMessage(chatId, { text: "סליחה, נתקלתי בשגיאה 🙏 נסה שוב בעוד רגע." }).catch(() => {});
     } finally {
       await sock.sendPresenceUpdate("paused", chatId).catch(() => {});
     }

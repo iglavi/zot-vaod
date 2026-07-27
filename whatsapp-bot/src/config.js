@@ -44,6 +44,15 @@ export const config = {
   myEmail: (process.env.GMAIL_ADDRESS || "").trim(),
   gmailAppPassword: (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, ""),
   shaniEmail: (process.env.SHANI_EMAIL || "").trim(),
+
+  // סוכן "חבר": Managed Agent נפרד לגמרי לשיחה פרטית (DM), עם session/memory
+  // משלו - לא מתערבב עם ליצי. מותר לגשת אליו רק ממספר הטלפון הזה (אבטחה קריטית -
+  // כל שיחה פרטית ממספר אחר מתעלמת בשקט מוחלט, ראו whatsapp.js).
+  friendAgentId: process.env.FRIEND_AGENT_ID || "",
+  friendEnvironmentId: process.env.FRIEND_ENVIRONMENT_ID || "",
+  friendBotName: process.env.FRIEND_BOT_NAME || "חבר",
+  friendAllowedNumber: (process.env.FRIEND_ALLOWED_NUMBER || "").replace(/[^0-9]/g, ""),
+  friendSessionsFile: path.join(dataDir, "friend_sessions.json"),
 };
 
 export function isChatAllowed(chatId) {
