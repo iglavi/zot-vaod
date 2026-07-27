@@ -6,6 +6,7 @@ import makeWASocket, {
   DisconnectReason,
   jidNormalizedUser,
   Browsers,
+  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
 import {
   config,
@@ -37,6 +38,43 @@ function briefMediaNote(message) {
   if (message?.stickerMessage) return "[שלח/ה מדבקה]";
   if (message?.documentMessage) return "[שלח/ה קובץ]";
   return null;
+}
+
+// סוגי קבצים שהסוכן יכול "לראות" בפועל (Claude תומך בתמונות ומסמכי PDF, לא בווידאו/אודיו).
+const SUPPORTED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_MEDIA_BYTES = 15 * 1024 * 1024; // מגבלה נדיבה כדי לא לשלוח קבצים ענקיים לסוכן
+
+function getSupportedMediaKind(message) {
+  const imageMimetype = message?.imageMessage?.mimetype;
+  if (imageMimetype && SUPPORTED_IMAGE_MIME_TYPES.includes(imageMimetype)) {
+    return { kind: "image", mimeType: imageMimetype };
+  }
+  const documentMimetype = message?.documentMessage?.mimetype;
+  if (documentMimetype === "application/pdf") {
+    return { kind: "document", mimeType: documentMimetype };
+  }
+  return null;
+}
+
+/** מוריד תמונה/PDF נתמכים מהודעת וואטסאפ ומחזיר תוכן ב-base64, מוכן לצירוף להודעה לסוכן. */
+async function downloadSupportedMedia(sock, msg) {
+  const info = getSupportedMediaKind(msg.message);
+  if (!info) return null;
+
+  try {
+    const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+      logger: baileysLogger,
+      reuploadRequest: sock.updateMediaMessage,
+    });
+    if (buffer.byteLength > MAX_MEDIA_BYTES) {
+      logger.warn(`קובץ שהתקבל גדול מדי (${buffer.byteLength} bytes) - מדלגים על צירוף לסוכן`);
+      return null;
+    }
+    return { kind: info.kind, mimeType: info.mimeType, base64: buffer.toString("base64") };
+  } catch (err) {
+    logger.error("הורדת קובץ מוואטסאפ נכשלה:", err);
+    return null;
+  }
 }
 
 function getSenderName(msg) {
@@ -158,14 +196,20 @@ export async function startWhatsApp() {
     }
     if (msg.key.fromMe) return;
 
-    const text = extractMessageText(msg.message);
+    const text = extractMessageText(msg.message) || "";
+    const hasSupportedMedia = Boolean(getSupportedMediaKind(msg.message));
     const senderName = getSenderName(msg);
 
-    if (!text) {
+    if (!text && !hasSupportedMedia) {
       const note = briefMediaNote(msg.message);
       if (note) messageBuffer.add(chatId, { sender: senderName, text: note, timestamp: Date.now() });
       return;
     }
+
+    // תמונה/PDF עם כיתוב מטופלים כמו טקסט רגיל לצורך זיהוי פנייה (הכיתוב נבדק כרגיל);
+    // תמונה/PDF בלי כיתוב עדיין יכולים "לספור" כהמשך שיחה בתוך החלון הקצר.
+    const mediaNote = hasSupportedMedia ? briefMediaNote(msg.message) : null;
+    const bufferText = mediaNote ? (text ? `${mediaNote} ${text}` : mediaNote) : text;
 
     const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
     const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
@@ -181,18 +225,20 @@ export async function startWhatsApp() {
     const isAddressed = isTagged || isAddressedByName || isKeywordTriggered || isContinuation;
 
     if (!isAddressed) {
-      messageBuffer.add(chatId, { sender: senderName, text, timestamp: Date.now() });
+      messageBuffer.add(chatId, { sender: senderName, text: bufferText, timestamp: Date.now() });
       return;
     }
 
-    logger.info(`[${chatId}] פנייה מאת ${senderName}: ${text}`);
+    logger.info(`[${chatId}] פנייה מאת ${senderName}: ${bufferText}`);
     const transcript = messageBuffer.formatTranscript(chatId);
     // ההודעה המפנה עצמה נכנסת גם היא לזיכרון הרקע (כדי שהשיחה תישאר רציפה בסיכומים עתידיים)
-    messageBuffer.add(chatId, { sender: senderName, text, timestamp: Date.now() });
+    messageBuffer.add(chatId, { sender: senderName, text: bufferText, timestamp: Date.now() });
+
+    const media = hasSupportedMedia ? await downloadSupportedMedia(sock, msg) : null;
 
     try {
       await sock.sendPresenceUpdate("composing", chatId).catch(() => {});
-      const reply = await runTurn(chatId, { senderName, text, transcript });
+      const reply = await runTurn(chatId, { senderName, text, transcript, media });
       if (reply) {
         await sock.sendMessage(chatId, { text: reply });
         messageBuffer.add(chatId, { sender: config.botName, text: reply, timestamp: Date.now() });

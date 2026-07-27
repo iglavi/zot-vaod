@@ -71,7 +71,7 @@ async function getOrCreateSessionId(chatId) {
   return createSession(chatId);
 }
 
-function buildUserMessage({ chatId, transcript, senderName, text }) {
+function buildUserMessage({ chatId, transcript, senderName, text, hasMedia }) {
   const now = DateTime.now().setZone(config.timezone);
   const nowLabel = now.setLocale("he").toFormat("cccc, d/L/yyyy HH:mm");
 
@@ -94,8 +94,8 @@ function buildUserMessage({ chatId, transcript, senderName, text }) {
     "[הקשר קבוצתי אחרון - רק לצורך רקע, אין צורך להתייחס לכל שורה]:",
     transcript,
     "",
-    "[ההודעה הבאה מופנית אליך ישירות]:",
-    `${senderName}: ${text}`
+    "[ההודעה הבאה מופנית אליך ישירות - הקובץ המצורף, אם יש, מופיע כתוכן נפרד בהודעה זו]:",
+    `${senderName}: ${text || (hasMedia ? "(שלח/ה קובץ, בלי טקסט נלווה)" : "")}`
   );
 
   return parts.join("\n");
@@ -135,11 +135,22 @@ async function handleCustomToolUse(chatId, event) {
  * זיכרון ארוך-טווח והקשר רקע), מטפל בקריאות לכלים (תזכורות, זיכרון) אם יש, וממתין
  * לתשובה הסופית של הסוכן. מחזיר את טקסט התשובה שיש לשלוח בחזרה לקבוצה.
  */
-export async function runTurn(chatId, { senderName, text, transcript }) {
+export async function runTurn(chatId, { senderName, text, transcript, media }) {
   await ensureSessionsMatchAgentVersion();
   let sessionId = await getOrCreateSessionId(chatId);
 
-  const userMessage = buildUserMessage({ chatId, transcript, senderName, text });
+  const userMessage = buildUserMessage({ chatId, transcript, senderName, text, hasMedia: Boolean(media) });
+
+  // אם יש קובץ נתמך (תמונה/PDF), הוא מצורף כבלוק תוכן נפרד לפני הטקסט - כך שהסוכן
+  // "רואה" אותו בפועל ולא רק מקבל הודעה שהוא קיים.
+  const messageContent = [];
+  if (media) {
+    messageContent.push({
+      type: media.kind, // "image" | "document"
+      source: { type: "base64", media_type: media.mimeType, data: media.base64 },
+    });
+  }
+  messageContent.push({ type: "text", text: userMessage });
 
   const runOnce = async (sid) => {
     const stream = await client.beta.sessions.events.stream(sid);
@@ -148,7 +159,7 @@ export async function runTurn(chatId, { senderName, text, transcript }) {
       events: [
         {
           type: "user.message",
-          content: [{ type: "text", text: userMessage }],
+          content: messageContent,
         },
       ],
     });
