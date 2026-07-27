@@ -14,7 +14,13 @@ if (!apiKey) {
   process.exit(1);
 }
 
-if ((process.env.AGENT_ID || process.env.ENVIRONMENT_ID) && !process.env.FORCE_RECREATE) {
+// מתעלם מערכי הדוגמה שמגיעים מ-.env.example בהעתקה ישירה (כמו "agent_..."), כדי
+// שלא "יחשבו" שהסוכן כבר קיים כשבפועל רק הועתקה התבנית בלי מילוי.
+function isConfigured(value) {
+  return Boolean(value) && !value.includes("...");
+}
+
+if ((isConfigured(process.env.AGENT_ID) || isConfigured(process.env.ENVIRONMENT_ID)) && !process.env.FORCE_RECREATE) {
   console.error(
     "נראה ש-AGENT_ID ו/או ENVIRONMENT_ID כבר מוגדרים ב-.env.\n" +
       "אם בכל זאת רוצים ליצור סוכן וסביבה חדשים (למשל כדי לשנות מודל או system prompt), " +
