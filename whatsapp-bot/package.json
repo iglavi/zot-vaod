@@ -9,6 +9,7 @@
     "start": "node src/index.js",
     "setup:agent": "node scripts/setup-agent.js",
     "update:agent": "node scripts/update-agent.js",
+    "setup:friend-agent": "node scripts/setup-friend-agent.js",
     "update:friend-agent": "node scripts/update-friend-agent.js"
   },
   "engines": {

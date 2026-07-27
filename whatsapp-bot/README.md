@@ -129,6 +129,41 @@ ALLOWED_CHAT_IDS=120363012345678901@g.us,120363019876543210@g.us
 
 מוכנים? עוצרים את הבוט המקומי (Ctrl+C) ועוברים לפריסה ב-Railway.
 
+### 3.4 (אופציונלי) הקמת סוכן "חבר" - שיחה פרטית נפרדת
+
+מעבר לליצי (שעונה בקבוצות), הבוט תומך גם בסוכן שני, נפרד לגמרי - "**חבר**" - שעונה **רק**
+בשיחה פרטית (DM) מול **מספר טלפון אחד ומורשה בלבד**. זה שני סוכנים נפרדים לגמרי: system
+prompt אחר, session/זיכרון נפרדים, ואפילו Agent+Environment נפרדים ב-Claude. אם אתם לא
+צריכים את זה - אפשר לדלג על הסעיף הזה; הבוט יתעלם בשקט מכל הודעה פרטית כל עוד `FRIEND_AGENT_ID`
+לא מוגדר.
+
+כדי להקים אותו:
+
+```bash
+npm run setup:friend-agent
+```
+
+בדיוק כמו `setup:agent`, זה ידפיס בסוף:
+
+```
+FRIEND_AGENT_ID=agent_01Abc...
+FRIEND_ENVIRONMENT_ID=env_01Xyz...
+```
+
+**העתיקו את שתי השורות האלה ל-`.env`**, והוסיפו גם:
+
+```
+FRIEND_ALLOWED_NUMBER=9725XXXXXXX   # המספר היחיד שמורשה לשיחה פרטית עם "חבר", בלי + ובלי רווחים
+```
+
+**חשוב לאבטחה:** כל הודעה פרטית ממספר שאינו `FRIEND_ALLOWED_NUMBER` תתעלם ממנה הבוט לגמרי,
+בלי תגובה ובלי לוג - כדי לא לחשוף שהיכולת הזו בכלל קיימת. אם `FRIEND_ALLOWED_NUMBER` (או
+`FRIEND_AGENT_ID`/`FRIEND_ENVIRONMENT_ID`) לא מוגדרים, הודעות פרטיות פשוט מתעלמות לגמרי.
+
+אם בעתיד תרצו לעדכן את ה-system prompt/כלים של "חבר" (למשל אחרי עריכת `src/friendConfig.js`)
+בלי ליצור סוכן חדש - הריצו `npm run update:friend-agent` (זה שומר על אותו `FRIEND_AGENT_ID`
+ועל כל השיחות/הזיכרון הקיימים).
+
 ---
 
 ## 4. פריסה ל-Railway
@@ -169,6 +204,12 @@ ALLOWED_CHAT_IDS=120363012345678901@g.us,120363019876543210@g.us
 | `ALLOWED_CHAT_IDS` | מזהי הקבוצות שגיליתם | מופרד בפסיקים, בלי רווחים |
 | `DATA_DIR` | `/data` | חייב להתאים ל-Mount Path של ה-Volume |
 | `TIMEZONE` | `Asia/Jerusalem` | |
+| `FRIEND_AGENT_ID` | מה שהודפס ב-`npm run setup:friend-agent` | רק אם הקמתם את סוכן "חבר" (סעיף 3.4) |
+| `FRIEND_ENVIRONMENT_ID` | מה שהודפס ב-`npm run setup:friend-agent` | רק אם הקמתם את סוכן "חבר" |
+| `FRIEND_ALLOWED_NUMBER` | המספר המורשה לשיחה פרטית | רק אם הקמתם את סוכן "חבר" |
+
+אם לא הקמתם את סוכן "חבר" - פשוט השמיטו את שלושת המשתנים האחרונים; הבוט יתעלם משיחות
+פרטיות בשקט.
 
 ### 4.4 חיבור וואטסאפ ראשוני ב-Railway (אם עדיין לא חיברתם מקומית)
 
@@ -228,14 +269,25 @@ ALLOWED_CHAT_IDS=120363012345678901@g.us,120363019876543210@g.us
 
 ```
 whatsapp-bot/
-  scripts/setup-agent.js   סקריפט חד-פעמי ליצירת ה-Agent וה-Environment ב-Claude
+  scripts/
+    setup-agent.js          סקריפט חד-פעמי ליצירת ה-Agent וה-Environment של ליצי ב-Claude
+    update-agent.js         עדכון system prompt/כלים של ליצי בלי ליצור סוכן חדש
+    setup-friend-agent.js   סקריפט חד-פעמי ליצירת ה-Agent וה-Environment של "חבר" ב-Claude
+    update-friend-agent.js  עדכון system prompt/כלים של "חבר" בלי ליצור סוכן חדש
   src/
-    config.js              טעינת משתני סביבה + נתיבי אחסון
-    logger.js               לוגים פשוטים עם חותמת זמן
-    store.js                אחסון JSON גנרי עם כתיבה אטומית לדיסק
-    messageBuffer.js        זיכרון-רקע זמני (בזיכרון RAM) של הודעות אחרונות לכל קבוצה
-    reminders.js             שמירת תזכורות בקובץ + תהליך רקע ששולח אותן בזמן
-    agent.js                 עטיפה ל-Managed Agents API: session לכל קבוצה, טיפול בכלי התזכורת
-    whatsapp.js              חיבור Baileys, קוד התאמה, זיהוי פניות לבוט, שליחת תשובות
-    index.js                 הפעלת הכול יחד
+    config.js               טעינת משתני סביבה + נתיבי אחסון
+    logger.js                לוגים פשוטים עם חותמת זמן
+    store.js                 אחסון JSON גנרי עם כתיבה אטומית לדיסק
+    messageBuffer.js         זיכרון-רקע זמני (בזיכרון RAM) של הודעות אחרונות לכל קבוצה
+    memory.js                זיכרון ארוך-טווח לכל קבוצה/שיחה, בקובץ Markdown על ה-Volume
+    reminders.js              שמירת תזכורות בקובץ + תהליך רקע ששולח אותן בזמן
+    email.js                  כלי send_email (שליחה דרך Gmail SMTP)
+    mediaContent.js            המרת קבצים מצורפים (תמונה/PDF/Word) לתוכן שהסוכן יכול "לראות"
+    agentRuntime.js            עטיפה גנרית ל-Managed Agents API (session לכל chatId, לולאת stream/tool-use) - משותפת לליצי ול"חבר"
+    agentConfig.js              system prompt וכלים של ליצי
+    agent.js                    הרצת "תור" מול ליצי (משתמש ב-agentRuntime)
+    friendConfig.js              system prompt וכלים של "חבר"
+    friendAgent.js                הרצת "תור" מול "חבר" (משתמש ב-agentRuntime), נפרד לגמרי מליצי
+    whatsapp.js                   חיבור Baileys, קוד התאמה, זיהוי פניות לליצי, ניתוב שיחות פרטיות ל"חבר", שליחת תשובות
+    index.js                      הפעלת הכול יחד
 ```
