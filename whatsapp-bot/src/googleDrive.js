@@ -1,7 +1,38 @@
 import { GoogleAuth } from "google-auth-library";
-import { parseOffice } from "officeparser";
+import AdmZip from "adm-zip";
+import mammoth from "mammoth";
 import { config } from "./config.js";
 import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE, PPTX_MIME_TYPE } from "./mediaContent.js";
+
+const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+ * חילוץ טקסט מינימלי מקובץ PowerPoint (pptx): הקובץ הוא ארכיון zip, וכל שקופית
+ * היא קובץ XML נפרד (ppt/slides/slideN.xml) עם ריצות טקסט בתוך תגיות <a:t>.
+ * לא נעזרים בספרייה ייעודית (כמו mammoth ל-Word) כדי לא לגרור תלויות כבדות
+ * (ספריות פענוח pptx מלאות נוטות לגרור גם מנועי OCR/רינדור PDF שאין בהם צורך כאן).
+ */
+function extractPptxText(buffer) {
+  const zip = new AdmZip(buffer);
+  const slideEntries = zip
+    .getEntries()
+    .filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.entryName))
+    .sort((a, b) => {
+      const numOf = (name) => Number(name.match(/slide(\d+)\.xml$/)[1]);
+      return numOf(a.entryName) - numOf(b.entryName);
+    });
+
+  const decodeEntities = (text) =>
+    text.replace(/&(amp|lt|gt|quot|apos);/g, (_, ent) => XML_ENTITIES[ent]);
+
+  return slideEntries
+    .map((entry, i) => {
+      const xml = entry.getData().toString("utf8");
+      const runs = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => decodeEntities(m[1]));
+      return `[שקופית ${i + 1}]\n${runs.join(" ")}`;
+    })
+    .join("\n\n");
+}
 
 // גישת קריאה-בלבד לגוגל דרייב דרך Service Account: רואה רק קבצים/תיקיות ששותפו
 // בפועל עם כתובת המייל של ה-Service Account (לא כל הדרייב האישי של אף אחד) - זו
@@ -97,10 +128,12 @@ export async function readDriveFile(fileId) {
   if (SUPPORTED_IMAGE_MIME_TYPES.includes(mimeType)) {
     return { name, mimeType, media: { kind: "image", mimeType, base64: buffer.toString("base64") } };
   }
-  if (mimeType === DOCX_MIME_TYPE || mimeType === PPTX_MIME_TYPE) {
-    const ast = await parseOffice(buffer);
-    const kind = mimeType === PPTX_MIME_TYPE ? "pptx-text" : "docx-text";
-    return { name, mimeType, media: { kind, text: ast.toText() } };
+  if (mimeType === DOCX_MIME_TYPE) {
+    const { value: text } = await mammoth.extractRawText({ buffer });
+    return { name, mimeType, media: { kind: "docx-text", text } };
+  }
+  if (mimeType === PPTX_MIME_TYPE) {
+    return { name, mimeType, media: { kind: "pptx-text", text: extractPptxText(buffer) } };
   }
 
   throw new Error(`סוג קובץ לא נתמך לקריאה: ${mimeType} (נתמכים: PDF, Word, PowerPoint, תמונה, וקבצי Google Docs/Slides/Sheets)`);
