@@ -19,12 +19,51 @@ id שכבר סונכרן), לא replace גורף. הטקסט המלא של הר�
 """
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 from . import config, storage
 
 _MARKER = Path(config.DATA_DIR) / ".turso_synced_max_id"
 _CHUNK_SIZE = 300  # רשומות לכל בקשת HTTP (כל רשומה = 2 statements: verdicts + fts)
+
+# נעילה בין-תהליכית: sync() קורא/כותב את _MARKER בלי טרנזקציה, אז שתי
+# הרצות בו-זמנית (fetch_daily.py + ingest_and_cleanup.py, למשל) יכולות
+# לקרוא את אותו since_id, לחשב טווחי-id חופפים, ולהתנגש ב-INSERT השני
+# (UNIQUE constraint על verdicts.id בטורסו - נצפה בפועל). קובץ-נעילה
+# בלעדי (O_EXCL) מבטיח ריצה טורית בין קוראים ל-sync(); "גונבים" נעילה
+# תקועה אחרי _LOCK_STALE_SEC כדי לא להיתקע לצמיתות אם מחזיק-הנעילה קרס.
+_LOCK = Path(config.DATA_DIR) / ".turso_sync.lock"
+_LOCK_STALE_SEC = 1800
+_LOCK_WAIT_SEC = 120
+
+
+def _acquire_lock() -> None:
+    _LOCK.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _LOCK_WAIT_SEC
+    while True:
+        try:
+            fd = os.open(_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return
+        except FileExistsError:
+            try:
+                if time.time() - _LOCK.stat().st_mtime > _LOCK_STALE_SEC:
+                    _LOCK.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    "turso_sync: לא הצליח לקבל נעילה תוך זמן סביר - תהליך אחר מסנכרן"
+                )
+            time.sleep(1)
+
+
+def _release_lock() -> None:
+    _LOCK.unlink(missing_ok=True)
 
 _VERDICT_COLUMNS = [
     "id", "case_number", "parties", "court", "proceeding", "case_type", "matter",
@@ -120,7 +159,11 @@ def delete_verdicts(rows: list[dict]) -> int:
 
 
 def sync(db_path: Path | None = None, verbose: bool = True) -> dict:
-    """דוחף ל-Turso כל רשומה מקומית עם id > הסימון האחרון. מחזיר סטטיסטיקה."""
+    """דוחף ל-Turso כל רשומה מקומית עם id > הסימון האחרון. מחזיר סטטיסטיקה.
+
+    נעול בין-תהליכית (ראו _acquire_lock) - קריאה מקבילית שנייה ל-sync()
+    (למשל fetch_daily.py מול ingest_and_cleanup.py הרץ ברקע) ממתינה, לא
+    רצה בו-זמנית, כדי לא לחשב since_id חופף פעמיים ולהתנגש ב-INSERT."""
     if not config.TURSO_DATABASE_URL:
         if verbose:
             print("Turso לא מוגדר - מדלג על סנכרון מרוחק.")
@@ -128,68 +171,72 @@ def sync(db_path: Path | None = None, verbose: bool = True) -> dict:
 
     import sqlite3
 
-    local_path = Path(db_path or config.DB_PATH)
-    since_id = _last_synced_id()
+    _acquire_lock()
+    try:
+        local_path = Path(db_path or config.DB_PATH)
+        since_id = _last_synced_id()
 
-    local = sqlite3.connect(f"file:{local_path.as_posix()}?mode=ro", uri=True)
-    cols = ",".join(_VERDICT_COLUMNS)
-    v_cols = ("id", "parties", "judge", "court", "case_number", "matter", "decision_type")
-    rows = local.execute(
-        f"SELECT {cols} FROM verdicts WHERE id > ? ORDER BY id", (since_id,)
-    ).fetchall()
-    ft_rows = {r[0]: r for r in local.execute(
-        f"SELECT {','.join(v_cols)} FROM verdicts WHERE id > ? ORDER BY id", (since_id,)
-    ).fetchall()}
-    local.close()
+        local = sqlite3.connect(f"file:{local_path.as_posix()}?mode=ro", uri=True)
+        cols = ",".join(_VERDICT_COLUMNS)
+        v_cols = ("id", "parties", "judge", "court", "case_number", "matter", "decision_type")
+        rows = local.execute(
+            f"SELECT {cols} FROM verdicts WHERE id > ? ORDER BY id", (since_id,)
+        ).fetchall()
+        ft_rows = {r[0]: r for r in local.execute(
+            f"SELECT {','.join(v_cols)} FROM verdicts WHERE id > ? ORDER BY id", (since_id,)
+        ).fetchall()}
+        local.close()
 
-    if not rows:
+        if not rows:
+            if verbose:
+                print(f"אין רשומות חדשות מאז id={since_id} - כלום לסנכרן.")
+            return {"configured": True, "synced": 0}
+
         if verbose:
-            print(f"אין רשומות חדשות מאז id={since_id} - כלום לסנכרן.")
-        return {"configured": True, "synced": 0}
+            print(f"{len(rows)} רשומות חדשות (id > {since_id}) - שולף טקסט מלא מ-R2 ומסנכרן ל-Turso...")
 
-    if verbose:
-        print(f"{len(rows)} רשומות חדשות (id > {since_id}) - שולף טקסט מלא מ-R2 ומסנכרן ל-Turso...")
+        ids = [r[0] for r in rows]
+        texts = storage.fetch_fulltexts(ids)
 
-    ids = [r[0] for r in rows]
-    texts = storage.fetch_fulltexts(ids)
+        v_placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
+        synced = 0
+        for start in range(0, len(rows), _CHUNK_SIZE):
+            chunk = rows[start:start + _CHUNK_SIZE]
+            statements: list[tuple[str, list]] = []
+            max_id_in_chunk = since_id
+            for row in chunk:
+                statements.append(
+                    (f"INSERT INTO verdicts ({cols}) VALUES ({v_placeholders})", list(row))
+                )
+                id_ = row[0]
+                ft = ft_rows[id_]
+                statements.append((
+                    "INSERT INTO verdicts_fts(rowid, parties, judge, court, case_number, "
+                    "matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)",
+                    [id_, ft[1], ft[2], ft[3], ft[4], ft[5], ft[6], texts.get(id_, "")],
+                ))
+                # מחזיק את distinct_values מעודכן גם ב-Turso (ראו search._distinct_values
+                # ו-ingest._insert_verdict - אותו רעיון, גם כאן) - בלעדיו ערך חדש
+                # לגמרי לא יופיע בתפריטי הסינון עד לבאקפיל ידני נוסף.
+                for field, val in (("court", row[3]), ("proceeding", row[4]), ("case_type", row[5])):
+                    if val:
+                        statements.append((
+                            "INSERT OR IGNORE INTO distinct_values(field, value) VALUES (?,?)",
+                            [field, val],
+                        ))
+                max_id_in_chunk = max(max_id_in_chunk, id_)
+            _run_batch(statements)
+            synced += len(chunk)
+            _MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _MARKER.write_text(str(max_id_in_chunk), encoding="utf-8")
+            if verbose and len(rows) > _CHUNK_SIZE:
+                print(f"  ...{synced}/{len(rows)} סונכרנו", flush=True)
 
-    v_placeholders = ",".join("?" * len(_VERDICT_COLUMNS))
-    synced = 0
-    for start in range(0, len(rows), _CHUNK_SIZE):
-        chunk = rows[start:start + _CHUNK_SIZE]
-        statements: list[tuple[str, list]] = []
-        max_id_in_chunk = since_id
-        for row in chunk:
-            statements.append(
-                (f"INSERT INTO verdicts ({cols}) VALUES ({v_placeholders})", list(row))
-            )
-            id_ = row[0]
-            ft = ft_rows[id_]
-            statements.append((
-                "INSERT INTO verdicts_fts(rowid, parties, judge, court, case_number, "
-                "matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)",
-                [id_, ft[1], ft[2], ft[3], ft[4], ft[5], ft[6], texts.get(id_, "")],
-            ))
-            # מחזיק את distinct_values מעודכן גם ב-Turso (ראו search._distinct_values
-            # ו-ingest._insert_verdict - אותו רעיון, גם כאן) - בלעדיו ערך חדש
-            # לגמרי לא יופיע בתפריטי הסינון עד לבאקפיל ידני נוסף.
-            for field, val in (("court", row[3]), ("proceeding", row[4]), ("case_type", row[5])):
-                if val:
-                    statements.append((
-                        "INSERT OR IGNORE INTO distinct_values(field, value) VALUES (?,?)",
-                        [field, val],
-                    ))
-            max_id_in_chunk = max(max_id_in_chunk, id_)
-        _run_batch(statements)
-        synced += len(chunk)
-        _MARKER.parent.mkdir(parents=True, exist_ok=True)
-        _MARKER.write_text(str(max_id_in_chunk), encoding="utf-8")
-        if verbose and len(rows) > _CHUNK_SIZE:
-            print(f"  ...{synced}/{len(rows)} סונכרנו", flush=True)
-
-    if verbose:
-        print(f"סונכרנו {synced} רשומות ל-Turso.")
-    return {"configured": True, "synced": synced}
+        if verbose:
+            print(f"סונכרנו {synced} רשומות ל-Turso.")
+        return {"configured": True, "synced": synced}
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":
