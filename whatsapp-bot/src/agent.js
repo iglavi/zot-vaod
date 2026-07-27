@@ -6,6 +6,7 @@ import { sendEmail } from "./email.js";
 import { mediaToContentBlocks } from "./mediaContent.js";
 import { createSessionRuntime } from "./agentRuntime.js";
 import { ENHANCED_GROUP_INSTRUCTIONS } from "./agentConfig.js";
+import { searchDriveFiles, readDriveFile } from "./googleDrive.js";
 import { DateTime } from "luxon";
 
 const runtime = createSessionRuntime({
@@ -66,6 +67,31 @@ async function handleCustomToolUse(chatId, event) {
         const result = await sendEmail({ to, subject, body });
         return {
           text: `המייל נשלח בהצלחה אל ${result.recipients.join(", ")}.`,
+          isError: false,
+        };
+      }
+      case "search_drive_files": {
+        if (!config.enhancedChatIds.includes(chatId)) {
+          return { text: "כלי זה זמין רק בקבוצה הייעודית למחקר.", isError: true };
+        }
+        const { query } = event.input || {};
+        const files = await searchDriveFiles(query);
+        if (files.length === 0) {
+          return { text: `לא נמצאו קבצים ששותפו עם הבוט שתואמים ל-"${query}".`, isError: false };
+        }
+        const list = files
+          .map((f) => `- ${f.name} (${f.mimeType}) - עודכן ${f.modifiedTime} - id: ${f.id}`)
+          .join("\n");
+        return { text: `נמצאו ${files.length} קבצים:\n${list}`, isError: false };
+      }
+      case "read_drive_file": {
+        if (!config.enhancedChatIds.includes(chatId)) {
+          return { text: "כלי זה זמין רק בקבוצה הייעודית למחקר.", isError: true };
+        }
+        const { file_id: fileId } = event.input || {};
+        const { name, media } = await readDriveFile(fileId);
+        return {
+          content: [{ type: "text", text: `[קובץ מגוגל דרייב: ${name}]` }, ...mediaToContentBlocks(media)],
           isError: false,
         };
       }

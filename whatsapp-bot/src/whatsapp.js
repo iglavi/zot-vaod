@@ -20,6 +20,7 @@ import { logger } from "./logger.js";
 import { messageBuffer } from "./messageBuffer.js";
 import { runTurn } from "./agent.js";
 import { runFriendTurn } from "./friendAgent.js";
+import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE } from "./mediaContent.js";
 
 // לוגר "שקט" עבור Baileys עצמו - הלוגים היישומיים שלנו עוברים דרך logger.js.
 const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
@@ -42,10 +43,7 @@ function briefMediaNote(message) {
   return null;
 }
 
-// סוגי קבצים שהסוכן יכול "לראות" בפועל (תמונות ו-PDF מצורפים כמו שהם; Word מחולץ
-// לטקסט - Claude לא קורא קובצי docx גולמיים. וידאו/אודיו/מדבקות/doc ישן אינם נתמכים).
-const SUPPORTED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+// וידאו/אודיו/מדבקות/doc ישן אינם נתמכים כלל.
 const MAX_MEDIA_BYTES = 15 * 1024 * 1024; // מגבלה נדיבה כדי לא לשלוח קבצים ענקיים לסוכן
 
 function getSupportedMediaKind(message) {

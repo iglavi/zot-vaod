@@ -97,12 +97,15 @@ export function createSessionRuntime({ name, agentId, environmentId, sessionsFil
           }
           case "agent.custom_tool_use": {
             const result = await toolHandler(event);
+            // רוב הכלים מחזירים טקסט פשוט (result.text); כלים שצריכים להחזיר מסמך/תמונה
+            // בפועל (כמו read_drive_file) מספקים content מוכן מראש (מערך בלוקים).
+            const content = result.content ?? [{ type: "text", text: result.text }];
             await client.beta.sessions.events.send(sid, {
               events: [
                 {
                   type: "user.custom_tool_result",
                   custom_tool_use_id: event.id,
-                  content: [{ type: "text", text: result.text }],
+                  content,
                   is_error: result.isError,
                 },
               ],

@@ -48,6 +48,11 @@ export const config = {
     .filter(Boolean),
   enhancedMemoryWordLimit: Number(process.env.ENHANCED_MEMORY_WORD_LIMIT || 8000),
 
+  // גישת קריאה-בלבד לגוגל דרייב (search_drive_files/read_drive_file, ראו googleDrive.js) -
+  // זמינה רק בקבוצות enhancedChatIds, ורק לקבצים ששותפו בפועל עם ה-Service Account הזה
+  // (לא כל הדרייב של המשתמש - זו גבולת האבטחה הטבעית של המנגנון).
+  googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "",
+
   // דוא"ל: ליצי שולח/ת מתוך כתובת ה-Gmail הזו (אימות מול Gmail SMTP באמצעות App
   // Password - לא הסיסמה הרגילה של החשבון). App Password מוצג עם רווחים לנוחות
   // קריאה; מסירים אותם כאן כדי שלא ישפיעו על האימות מול השרת.
