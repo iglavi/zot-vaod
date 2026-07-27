@@ -115,6 +115,7 @@ export async function startWhatsApp() {
   let stopped = false;
   let currentSock = null;
   const seenUnknownChats = new Set();
+  const seenUnauthorizedPrivateNumbers = new Set();
   // chatId -> זמן (ms) של התשובה האחרונה של ליצי, לצורך חלון "המשך שיחה" קצר.
   const lastBotReplyAt = new Map();
 
@@ -287,7 +288,18 @@ export async function startWhatsApp() {
     if (!config.friendAllowedNumber) return; // לא הוגדר - אין למי לענות, שקט מוחלט
 
     const allowedJid = `${config.friendAllowedNumber}@s.whatsapp.net`;
-    if (chatId !== allowedJid) return; // שקט מוחלט - גם לא לוג
+    if (chatId !== allowedJid) {
+      // בלי תגובה לשולח בכל מקרה (שם עובר האבטחה האמיתית) - אבל כן רושמים פעם אחת ללוג
+      // הפרטי (נגיש רק לבעלים ב-Railway), כדי שיהיה אפשר לוודא/לתקן את FRIEND_ALLOWED_NUMBER
+      // בדיוק כמו מנגנון גילוי הקבוצות הלא-מאושרות.
+      if (!seenUnauthorizedPrivateNumbers.has(chatId)) {
+        seenUnauthorizedPrivateNumbers.add(chatId);
+        logger.info(
+          `הודעה פרטית ממספר לא מאושר: ${chatId} (לא תואם ל-FRIEND_ALLOWED_NUMBER הנוכחי - אם זה המספר שלך, ודאו שהוא מוגדר בדיוק כמו הספרות שלפני ה-@ כאן)`
+        );
+      }
+      return;
+    }
 
     const text = extractMessageText(msg.message) || "";
     const hasSupportedMedia = Boolean(getSupportedMediaKind(msg.message));
