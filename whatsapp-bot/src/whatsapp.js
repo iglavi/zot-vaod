@@ -250,7 +250,15 @@ export async function startWhatsApp() {
       Boolean(lastReplyAt) && Date.now() - lastReplyAt < CONTINUATION_WINDOW_MS;
     const isContinuation = withinContinuationWindow && !startsWithHumanName(text);
 
-    const isAddressed = isTagged || isAddressedByName || isKeywordTriggered || isContinuation;
+    // בקבוצות "משודרגות" (בד"כ שיחה ייעודית עם משתמש/ת יחיד/ה) כל הודעה נחשבת פנייה
+    // ישירה - בלי תיוג/שם/מילת מפתח - בדיוק כמו שיחה פרטית, כי אין שם "רעש רקע" בין
+    // כמה בני אדם לסנן ממנו.
+    const isAddressed =
+      config.enhancedChatIds.includes(chatId) ||
+      isTagged ||
+      isAddressedByName ||
+      isKeywordTriggered ||
+      isContinuation;
 
     if (!isAddressed) {
       messageBuffer.add(chatId, { sender: senderName, text: bufferText, timestamp: Date.now() });
