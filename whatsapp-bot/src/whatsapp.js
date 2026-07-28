@@ -136,7 +136,17 @@ export async function startWhatsApp() {
 
   async function connect() {
     const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
-    const { version } = await fetchLatestBaileysVersion();
+    // גרסת פרוטוקול הוואטסאפ מתעדכנת מול השרתים של גוגל וואטסאפ מתישהו לזמן-זמן; אם
+    // הגרסה "נתקעת" ישנה, וואטסאפ דוחה כל ניסיון חיבור עם קוד 405 (לא בעיית auth בכלל -
+    // ראו baileys-version.json ב-GitHub של הפרויקט). fetchLatestBaileysVersion שולפת את
+    // הגרסה העדכנית משם בכל הפעלה; אם השליפה נכשלת (למשל בעיית רשת), היא חוזרת בשקט
+    // לגרסה מיושנת שחבויה בחבילה המותקנת - לכן חשוב לרשום ללוג אם זה קרה.
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    if (!isLatest) {
+      logger.warn(`לא הצלחתי לשלוף את גרסת הפרוטוקול העדכנית של וואטסאפ - משתמש בגרסה מיושנת (${version.join(".")}), עלול לגרום לניתוקים עם קוד 405.`);
+    } else {
+      logger.info(`גרסת פרוטוקול וואטסאפ: ${version.join(".")}`);
+    }
 
     const sock = makeWASocket({
       version,
