@@ -157,9 +157,16 @@ export async function writeDriveFile(fileName, content) {
   const res = await client.request({
     url: `${DRIVE_UPLOAD_API}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink`,
     method: "POST",
+    // gaxios מצפה שכל חלק ב-multipart יספק headers כאובייקט Headers אמיתי (עם מתודת
+    // .get()) - לא אובייקט JS רגיל. אובייקט רגיל נכשל בפנים עם שגיאה עמומה
+    // ("currentPart.headers.get is not a function") שנראית כמו באג בספרייה, אבל
+    // בפועל היא רק אי-התאמת טיפוסים בקריאה שלנו.
     multipart: [
-      { headers: { "Content-Type": "application/json; charset=UTF-8" }, content: JSON.stringify(metadata) },
-      { headers: { "Content-Type": "text/markdown; charset=UTF-8" }, content },
+      {
+        headers: new Headers({ "Content-Type": "application/json; charset=UTF-8" }),
+        content: JSON.stringify(metadata),
+      },
+      { headers: new Headers({ "Content-Type": "text/markdown; charset=UTF-8" }), content },
     ],
   });
   return res.data;

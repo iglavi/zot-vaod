@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import mammoth from "mammoth";
@@ -64,6 +65,13 @@ function getSupportedMediaKind(message) {
   return null;
 }
 
+// כמה ניתוקים רצופים עם אותו קוד שגיאה, תוך כמה זמן, לפני שמפסיקים לנסות reconnect
+// "עיוור" ובמקום זאת מנקים את פרטי ההתחברות השמורים ומבקשים קוד התאמה חדש. חלק
+// מקודי הניתוק (כמו 428/408) מחלימים לבד תוך כמה ניסיונות; קודים אחרים (כמו 405)
+// לא מחלימים אף פעם - בלי הבלם הזה זו לולאת reconnect אינסופית שרק מציפה לוגים.
+const RECONNECT_FAILURE_THRESHOLD = 5;
+const RECONNECT_FAILURE_WINDOW_MS = 60 * 1000;
+
 /** מוריד תמונה/PDF/Word/Markdown נתמכים מהודעת וואטסאפ, ומחזיר תוכן מוכן לצירוף להודעה לסוכן. */
 async function downloadSupportedMedia(sock, msg) {
   const info = getSupportedMediaKind(msg.message);
@@ -119,6 +127,8 @@ function startsWithHumanName(text) {
 export async function startWhatsApp() {
   let stopped = false;
   let currentSock = null;
+  // מעקב אחרי ניתוקים רצופים באותו קוד שגיאה, לצורך הבלם שמונע לולאת reconnect אינסופית.
+  let recentReconnectFailure = null; // { statusCode, count, firstAt }
   const seenUnknownChats = new Set();
   const seenUnauthorizedPrivateNumbers = new Set();
   // chatId -> זמן (ms) של התשובה האחרונה של ליצי, לצורך חלון "המשך שיחה" קצר.
@@ -171,6 +181,7 @@ export async function startWhatsApp() {
 
       if (connection === "open") {
         logger.info("החיבור לוואטסאפ פעיל ✅");
+        recentReconnectFailure = null;
       } else if (connection === "close") {
         const statusCode = lastDisconnect?.error instanceof Boom
           ? lastDisconnect.error.output?.statusCode
@@ -184,7 +195,35 @@ export async function startWhatsApp() {
           return;
         }
 
-        logger.warn("החיבור לוואטסאפ נסגר, מתחבר מחדש...", statusCode || "");
+        if (
+          recentReconnectFailure?.statusCode === statusCode &&
+          Date.now() - recentReconnectFailure.firstAt < RECONNECT_FAILURE_WINDOW_MS
+        ) {
+          recentReconnectFailure.count += 1;
+        } else {
+          recentReconnectFailure = { statusCode, count: 1, firstAt: Date.now() };
+        }
+
+        if (recentReconnectFailure.count >= RECONNECT_FAILURE_THRESHOLD) {
+          logger.error(
+            `${recentReconnectFailure.count} ניתוקים רצופים עם קוד ${statusCode} תוך פחות מ-` +
+              `${RECONNECT_FAILURE_WINDOW_MS / 1000} שניות - נראה שהחיבור לא יחלים לבד. ` +
+              "מנקה את פרטי ההתחברות השמורים ומבקש קוד התאמה חדש..."
+          );
+          recentReconnectFailure = null;
+          try {
+            fs.rmSync(config.authDir, { recursive: true, force: true });
+          } catch (err) {
+            logger.warn("מחיקת תיקיית ההתחברות נכשלה:", err.message);
+          }
+          if (!stopped) setTimeout(connect, 2000);
+          return;
+        }
+
+        logger.warn(
+          `החיבור לוואטסאפ נסגר, מתחבר מחדש... ${statusCode || ""} ` +
+            `(ניסיון ${recentReconnectFailure.count}/${RECONNECT_FAILURE_THRESHOLD} באותו קוד)`
+        );
         if (!stopped) setTimeout(connect, 2000);
       }
     });
