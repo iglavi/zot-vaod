@@ -335,7 +335,7 @@ whatsapp-bot/
     memory.js                זיכרון ארוך-טווח לכל קבוצה/שיחה, בקובץ Markdown על ה-Volume
     reminders.js              שמירת תזכורות בקובץ + תהליך רקע ששולח אותן בזמן
     email.js                  כלי send_email (שליחה דרך Gmail SMTP)
-    mediaContent.js            המרת קבצים מצורפים (תמונה/PDF/Word/PowerPoint) לתוכן שהסוכן יכול "לראות"
+    mediaContent.js            המרת קבצים מצורפים (תמונה/PDF/Word/PowerPoint/Markdown) לתוכן שהסוכן יכול "לראות"
     googleDrive.js              גישת קריאה לגוגל דרייב (Service Account) - חיפוש/קריאת קבצים לקבוצות משודרגות
     agentRuntime.js            עטיפה גנרית ל-Managed Agents API (session לכל chatId, לולאת stream/tool-use) - משותפת לליצי ול"חבר"
     agentConfig.js              system prompt וכלים של ליצי

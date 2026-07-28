@@ -2,7 +2,7 @@ import { GoogleAuth } from "google-auth-library";
 import AdmZip from "adm-zip";
 import mammoth from "mammoth";
 import { config } from "./config.js";
-import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE, PPTX_MIME_TYPE } from "./mediaContent.js";
+import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE, PPTX_MIME_TYPE, isMarkdownFile } from "./mediaContent.js";
 
 const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -135,6 +135,9 @@ export async function readDriveFile(fileId) {
   if (mimeType === PPTX_MIME_TYPE) {
     return { name, mimeType, media: { kind: "pptx-text", text: extractPptxText(buffer) } };
   }
+  if (isMarkdownFile({ mimeType, fileName: name })) {
+    return { name, mimeType, media: { kind: "markdown-text", text: buffer.toString("utf8") } };
+  }
 
-  throw new Error(`סוג קובץ לא נתמך לקריאה: ${mimeType} (נתמכים: PDF, Word, PowerPoint, תמונה, וקבצי Google Docs/Slides/Sheets)`);
+  throw new Error(`סוג קובץ לא נתמך לקריאה: ${mimeType} (נתמכים: PDF, Word, PowerPoint, Markdown, תמונה, וקבצי Google Docs/Slides/Sheets)`);
 }

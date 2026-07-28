@@ -20,7 +20,7 @@ import { logger } from "./logger.js";
 import { messageBuffer } from "./messageBuffer.js";
 import { runTurn } from "./agent.js";
 import { runFriendTurn } from "./friendAgent.js";
-import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE } from "./mediaContent.js";
+import { SUPPORTED_IMAGE_MIME_TYPES, DOCX_MIME_TYPE, isMarkdownFile } from "./mediaContent.js";
 
 // לוגר "שקט" עבור Baileys עצמו - הלוגים היישומיים שלנו עוברים דרך logger.js.
 const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
@@ -58,10 +58,13 @@ function getSupportedMediaKind(message) {
   if (documentMimetype === DOCX_MIME_TYPE) {
     return { kind: "docx", mimeType: documentMimetype };
   }
+  if (isMarkdownFile({ mimeType: documentMimetype, fileName: message?.documentMessage?.fileName })) {
+    return { kind: "markdown", mimeType: documentMimetype };
+  }
   return null;
 }
 
-/** מוריד תמונה/PDF/Word נתמכים מהודעת וואטסאפ, ומחזיר תוכן מוכן לצירוף להודעה לסוכן. */
+/** מוריד תמונה/PDF/Word/Markdown נתמכים מהודעת וואטסאפ, ומחזיר תוכן מוכן לצירוף להודעה לסוכן. */
 async function downloadSupportedMedia(sock, msg) {
   const info = getSupportedMediaKind(msg.message);
   if (!info) return null;
@@ -83,6 +86,10 @@ async function downloadSupportedMedia(sock, msg) {
         return null;
       }
       return { kind: "docx-text", text };
+    }
+
+    if (info.kind === "markdown") {
+      return { kind: "markdown-text", text: buffer.toString("utf8") };
     }
 
     return { kind: info.kind, mimeType: info.mimeType, base64: buffer.toString("base64") };
