@@ -52,6 +52,10 @@ export const config = {
   // זמינה רק בקבוצות enhancedChatIds, ורק לקבצים ששותפו בפועל עם ה-Service Account הזה
   // (לא כל הדרייב של המשתמש - זו גבולת האבטחה הטבעית של המנגנון).
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "",
+  // תיקיית היעד ליצירת קבצי Markdown חדשים (write_drive_file) - בלי זה, קובץ חדש
+  // ייווצר ב"דרייב" של ה-Service Account עצמו, שהמשתמש כלל לא רואה. מזהה התיקייה
+  // מופיע בסוף כתובת ה-URL שלה בדפדפן: drive.google.com/drive/folders/<המזהה כאן>
+  googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID || "",
 
   // דוא"ל: ליצי שולח/ת מתוך כתובת ה-Gmail הזו (אימות מול Gmail SMTP באמצעות App
   // Password - לא הסיסמה הרגילה של החשבון). App Password מוצג עם רווחים לנוחות

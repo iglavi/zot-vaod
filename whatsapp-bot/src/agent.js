@@ -6,7 +6,7 @@ import { sendEmail } from "./email.js";
 import { mediaToContentBlocks } from "./mediaContent.js";
 import { createSessionRuntime } from "./agentRuntime.js";
 import { ENHANCED_GROUP_INSTRUCTIONS } from "./agentConfig.js";
-import { searchDriveFiles, readDriveFile } from "./googleDrive.js";
+import { searchDriveFiles, readDriveFile, writeDriveFile } from "./googleDrive.js";
 import { DateTime } from "luxon";
 
 const runtime = createSessionRuntime({
@@ -94,6 +94,14 @@ async function handleCustomToolUse(chatId, event) {
           content: [{ type: "text", text: `[קובץ מגוגל דרייב: ${name}]` }, ...mediaToContentBlocks(media)],
           isError: false,
         };
+      }
+      case "write_drive_file": {
+        if (!config.enhancedChatIds.includes(chatId)) {
+          return { text: "כלי זה זמין רק בקבוצה הייעודית למחקר.", isError: true };
+        }
+        const { file_name: fileName, content } = event.input || {};
+        const file = await writeDriveFile(fileName, content);
+        return { text: `הקובץ "${file.name}" נשמר בהצלחה בגוגל דרייב.`, isError: false };
       }
       default:
         return { text: `שגיאה: כלי לא מוכר: ${event.name}`, isError: true };

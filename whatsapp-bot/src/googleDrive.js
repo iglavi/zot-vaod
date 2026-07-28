@@ -34,11 +34,15 @@ function extractPptxText(buffer) {
     .join("\n\n");
 }
 
-// גישת קריאה-בלבד לגוגל דרייב דרך Service Account: רואה רק קבצים/תיקיות ששותפו
+// גישה לגוגל דרייב דרך Service Account: רואה/יכולה לערוך רק קבצים/תיקיות ששותפו
 // בפועל עם כתובת המייל של ה-Service Account (לא כל הדרייב האישי של אף אחד) - זו
 // גבולת ההרשאה הטבעית והבטוחה של המנגנון, בלי צורך ב-OAuth consent מול המשתמש.
+// היקף (scope) מלא של drive (לא drive.readonly) כדי לאפשר גם כתיבה - אבל כתיבה בפועל
+// עדיין דורשת ששיתפתם את התיקייה עם הרשאת Editor (לא Viewer), אחרת גוגל תדחה את הבקשה
+// בלי קשר ל-scope של הטוקן.
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
-const SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
+const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
+const SCOPES = ["https://www.googleapis.com/auth/drive"];
 
 // יצוא Google Docs/Slides/Sheets ל"טקסט רגיל" - פשוט ואמין יותר מהמרה ל-PDF,
 // ומספיק לצורך ניתוח תוכן (לא נדרשת שמירה על עיצוב חזותי).
@@ -140,4 +144,23 @@ export async function readDriveFile(fileId) {
   }
 
   throw new Error(`סוג קובץ לא נתמך לקריאה: ${mimeType} (נתמכים: PDF, Word, PowerPoint, Markdown, תמונה, וקבצי Google Docs/Slides/Sheets)`);
+}
+
+/** יוצר קובץ Markdown חדש בתיקיית היעד (GOOGLE_DRIVE_FOLDER_ID), ומחזיר {id, name, webViewLink}. */
+export async function writeDriveFile(fileName, content) {
+  if (!config.googleDriveFolderId) {
+    throw new Error("כתיבה לגוגל דרייב לא מוגדרת (חסר GOOGLE_DRIVE_FOLDER_ID במשתני הסביבה).");
+  }
+  const client = await getAuthClient();
+  const metadata = { name: fileName, parents: [config.googleDriveFolderId], mimeType: "text/markdown" };
+
+  const res = await client.request({
+    url: `${DRIVE_UPLOAD_API}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink`,
+    method: "POST",
+    multipart: [
+      { headers: { "Content-Type": "application/json; charset=UTF-8" }, content: JSON.stringify(metadata) },
+      { headers: { "Content-Type": "text/markdown; charset=UTF-8" }, content },
+    ],
+  });
+  return res.data;
 }
