@@ -215,10 +215,17 @@ export async function startWhatsApp() {
         }
 
         if (recentReconnectFailure.count >= RECONNECT_FAILURE_THRESHOLD) {
+          // עוצרים לגמרי במקום להמשיך לנסות אוטומטית: ניסיונות reconnect/pairing חוזרים
+          // ותכופים הם בדיוק הדפוס שגורם לוואטסאפ לזהות "התנהגות בוטית" ולחסום/לנתק
+          // מכשיר ביוזמתה (קוד 401/loggedOut) - המשך ניסיונות אוטומטיים בשלב הזה עלול
+          // להחמיר חסימה כזו במקום לפתור אותה. מנקים auth כדי שהניסיון הידני הבא יתחיל
+          // נקי, אבל מחכים להפעלה מחדש ידנית (לא מייד, ולא בלולאה).
           logger.error(
             `${recentReconnectFailure.count} ניתוקים רצופים עם קוד ${statusCode} תוך פחות מ-` +
-              `${RECONNECT_FAILURE_WINDOW_MS / 1000} שניות - נראה שהחיבור לא יחלים לבד. ` +
-              "מנקה את פרטי ההתחברות השמורים ומבקש קוד התאמה חדש..."
+              `${RECONNECT_FAILURE_WINDOW_MS / 1000} שניות - עוצר ניסיונות reconnect אוטומטיים ` +
+              "(ניסיונות חוזרים ותכופים מדי עלולים להיראות לוואטסאפ כהתנהגות בוטית ולהחמיר את הבעיה). " +
+              "מנקה את תיקיית ההתחברות (DATA_DIR/baileys_auth). מומלץ להמתין קצת (למשל שעה) לפני " +
+              "הפעלה מחדש ידנית של השירות לניסיון חיבור נקי עם קוד התאמה חדש."
           );
           recentReconnectFailure = null;
           try {
@@ -226,7 +233,6 @@ export async function startWhatsApp() {
           } catch (err) {
             logger.warn("מחיקת תיקיית ההתחברות נכשלה:", err.message);
           }
-          if (!stopped) setTimeout(connect, 2000);
           return;
         }
 
