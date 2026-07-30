@@ -199,9 +199,21 @@ export async function startWhatsApp() {
         const loggedOut = statusCode === DisconnectReason.loggedOut;
 
         if (loggedOut) {
-          logger.error(
-            "החיבור לוואטסאפ נותק (נותקת מהמכשיר). יש למחוק את תיקיית ההתחברות (DATA_DIR/baileys_auth) ולהתחבר מחדש עם קוד התאמה חדש."
-          );
+          // מוחקים אוטומטית - זו רק פעולת קבצים מקומית, בלי שום פנייה לוואטסאפ, אז אין
+          // בה סיכון להחמיר חסימה. לא מתחברים מחדש אוטומטית בכל זאת (כמו בהמשך) - כדי
+          // לא ליצור בעצמנו את דפוס ניסיונות ה-pairing התכופים שגורם לחסימות מהסוג הזה.
+          try {
+            fs.rmSync(config.authDir, { recursive: true, force: true });
+            logger.error(
+              "החיבור לוואטסאפ נותק (נותקת מהמכשיר). תיקיית ההתחברות נוקתה אוטומטית - " +
+                "יש להפעיל את השירות מחדש ידנית כדי לקבל קוד התאמה חדש."
+            );
+          } catch (err) {
+            logger.error(
+              "החיבור לוואטסאפ נותק (נותקת מהמכשיר), וניקוי תיקיית ההתחברות נכשל: " +
+                `${err.message}. מחקו ידנית את DATA_DIR/baileys_auth והפעילו מחדש.`
+            );
+          }
           return;
         }
 
