@@ -20,7 +20,7 @@ export function AiChat() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [step, setStep] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const startedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -102,7 +102,19 @@ export function AiChat() {
   return (
     <>
       <Header active="/ai" />
-      <div className="container-page py-8 grid" style={{ gridTemplateColumns: sidebarOpen ? "260px 1fr" : "1fr" }}>
+      <div className="container-page pt-6">
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          className="text-xs text-green-700 hover:text-green-900 flex items-center gap-1.5 mb-2"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+          {sidebarOpen ? "הסתרת היסטוריית שיחות" : "הצגת היסטוריית שיחות"}
+        </button>
+      </div>
+      <div className="container-page pb-8 grid gap-2" style={{ gridTemplateColumns: sidebarOpen ? "260px 1fr" : "1fr" }}>
         {sidebarOpen && (
           <aside className="pl-8 border-l border-border ml-2 hidden md:block">
             <button className="btn-outline w-full mb-4" onClick={() => { setTurns([]); startedRef.current = true; }}>
