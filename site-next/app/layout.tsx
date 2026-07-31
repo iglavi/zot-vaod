@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   title: "גילוי נאות — פסקי הדין של ישראל, בחינם",
   description:
     "גילוי נאות הוא מאגר מידע משפטי שמנגיש החלטות ופסקי דין מאתר הרשות השופטת. שאלו כל שאלה משפטית בשפה חופשית וקבלו תשובה.",
-  icons: { icon: "/favicon.svg" },
+  icons: { icon: "/logo-icon.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

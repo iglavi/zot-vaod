@@ -1,31 +1,21 @@
 "use client";
 
 /**
- * סמל "גילוי נאות" — גרסה וקטורית בהשראת שרטוט החותמת המקורי (טבעת כפולה
- * + טבעות פנימיות + פס אמצעי ריק), בגוון הירוק של עיצוב הפיגמה. props.spin
- * מפעיל סיבוב איטי — משמש בזמן טעינה/חיפוש.
+ * סמל "גילוי נאות" - הנכס המקורי מפיגמה (חותמת מעוצבת), לא שחזור ידני.
  */
 export function LogoIcon({ size = 40, spin = false, className = "" }:
   { size?: number; spin?: boolean; className?: string }) {
-  const rings = [];
-  for (let r = 10; r <= 82; r += 5.2) rings.push(r);
   return (
-    <svg
-      viewBox="0 0 200 200"
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logo-icon.png"
+      alt=""
       width={size}
-      height={size}
+      height={size * (44 / 40)}
       className={`${spin ? "animate-spin-slow" : ""} ${className}`}
+      style={{ width: size, height: "auto" }}
       aria-hidden="true"
-    >
-      <circle cx="100" cy="100" r="94" fill="none" stroke="#295C4C" strokeWidth="5" />
-      <circle cx="100" cy="100" r="86" fill="none" stroke="#295C4C" strokeWidth="1.5" />
-      {rings.map((r) => (
-        <circle key={r} cx="100" cy="100" r={r} fill="none" stroke="#295C4C" strokeWidth="1.4" opacity={0.8} />
-      ))}
-      <rect x="4" y="84" width="192" height="32" fill="#FAF7F1" />
-      <line x1="4" y1="84" x2="196" y2="84" stroke="#295C4C" strokeWidth="4" />
-      <line x1="4" y1="116" x2="196" y2="116" stroke="#295C4C" strokeWidth="4" />
-    </svg>
+    />
   );
 }
 
