@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="גילוי נאות">
+  <title>גילוי נאות</title>
+  <defs>
+    <!-- hides the middle band so the rings appear "cut" by a clear stripe -->
+    <mask id="band-cut">
+      <rect x="0" y="0" width="200" height="200" fill="#fff" />
+      <rect x="0" y="82" width="200" height="36" fill="#000" />
+    </mask>
+  </defs>
+
+  <g mask="url(#band-cut)" fill="none" stroke="currentColor" stroke-linecap="butt">
+    <circle cx="100" cy="100" r="94" stroke-width="5" />
+    <circle cx="100" cy="100" r="84" stroke-width="3.2" />
+    <circle cx="100" cy="100" r="70" stroke-width="2.6" />
+    <circle cx="100" cy="100" r="64" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="58" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="52" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="46" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="40" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="34" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="28" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="22" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="16" stroke-width="2.4" />
+    <circle cx="100" cy="100" r="10" stroke-width="2.4" />
+  </g>
+
+  <!-- the two rules of the band -->
+  <g fill="currentColor">
+    <rect x="1" y="82" width="198" height="5" />
+    <rect x="1" y="113" width="198" height="5" />
+  </g>
+</svg>

@@ -79,6 +79,13 @@ venv/
 # סודות (מפתחות API) — לעולם לא נשמרים ב-git
 .streamlit/secrets.toml
 
+# Node / Next.js (האתר החדש)
+node_modules/
+.next/
+out/
+next-env.d.ts
+.env*.local
+
 # מערכת
 .DS_Store
 Thumbs.db
