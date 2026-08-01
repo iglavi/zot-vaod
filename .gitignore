@@ -26,6 +26,14 @@ documents/**
 # ארכיון בית המשפט העליון (fetch_supreme.py) — נתונים גולמיים, לא נשמרים ב-git
 documents_supreme/**
 
+# ארכיון היסטורי של נט המשפט (_nethamishpat_*.py) — נתונים גולמיים/מטא-דאטה
+# ביניים, לא נשמרים ב-git (ראו README.md)
+documents_nethamishpat/**
+data/nethamishpat/**
+data/nethamishpat_seed_csv/**
+data/.r2_uploaded_nethamishpat.txt
+MD 2020-2022/**
+
 # יומני הרצה (מקומיים)
 *_log.txt
 *_log2.txt

@@ -25,7 +25,7 @@ from . import config
 # מספר העלאות מקבילות ל-R2. בניגוד להורדות מ-decisions.court.gov.il (ששם
 # צריך זהירות בגלל WAF שחוסם התנהגות לא-אנושית), R2 הוא שירות ענן חזק
 # שמיועד לעומס מקביל — אין סיבה להעלות קובץ-אחר-קובץ.
-_UPLOAD_WORKERS = 10
+_UPLOAD_WORKERS = 20  # R2 is a cloud service (not WAF-protected like court.gov.il) - bumped from 10 given a large backlog (2026-07-28, 2023-2025 Lambda migration produced documents far faster than the old single-machine rate this was tuned for). Tried 50 first: triggered R2 "reduce concurrent request rate for the same object" throttling on upload_fulltext (likely occasional duplicate ids in one batch) - 20 is a middle ground, still ~2x the original.
 
 _MANIFEST = config.DATA_DIR / ".r2_uploaded.txt"
 _EXT = (".pdf", ".docx", ".doc")
@@ -204,6 +204,23 @@ def upload_fulltexts(items: list[tuple[int, str]], verbose: bool = True) -> dict
     if verbose and errors:
         print(f"upload_fulltexts: {uploaded} הועלו, {errors} נכשלו.")
     return {"configured": True, "uploaded": uploaded, "errors": errors}
+
+
+def fetch_document(key: str, client=None) -> bytes | None:
+    """שולף מסמך מקור בודד (PDF/Word) מ-R2 לפי המפתח המדויק (זהה תמיד ל-
+    file_relpath_pdf/docx ב-DB, ראו zot/ingest.py: docs_prefix+relpath).
+    שימוש עיקרי: OCR על מסמך שהעותק המקומי שלו כבר נמחק (הועלה+אונדקס,
+    ראו תבנית ה-cleanup בסקריפטי ה-ingest) לפני שה-OCR הספיק להגיע אליו -
+    זה סוגר את מרוץ-התנאים הזה לגמרי, בלי קשר לקצב מחיקה מקומי. מחזיר
+    None בכישלון/חוסר-הגדרה (לא זורק - כשל בודד לא אמור להפיל ריצה שלמה)."""
+    client = client or _client()
+    if client is None or not config.R2_BUCKET:
+        return None
+    try:
+        return client.get_object(Bucket=config.R2_BUCKET, Key=key)["Body"].read()
+    except Exception as e:  # noqa: BLE001
+        print(f"fetch_document: נכשל עבור key={key}: {type(e).__name__}: {e}")
+        return None
 
 
 def delete_fulltext(id_: int, client=None) -> bool:
