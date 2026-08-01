@@ -8,15 +8,24 @@ export const STEP_LABELS: Record<string, string> = {
   answering: "מנסח תשובה…",
 };
 
-export function ThinkingSteps({ step }: { step: string | null }) {
+const DEFAULT_ORDER = ["received", "analyzing", "retrieving", "answering"];
+
+export function ThinkingSteps({
+  step,
+  labels = STEP_LABELS,
+  order = DEFAULT_ORDER,
+}: {
+  step: string | null;
+  labels?: Record<string, string>;
+  order?: string[];
+}) {
   if (!step) return null;
-  const order = ["received", "analyzing", "retrieving", "answering"];
   const idx = Math.max(0, order.indexOf(step));
   return (
     <div className="card flex items-center gap-4 px-5 py-4 max-w-md">
       <LogoIcon size={34} spin />
       <div className="text-sm">
-        <div className="font-medium text-green-900">{STEP_LABELS[step] ?? step}</div>
+        <div className="font-medium text-green-900">{labels[step] ?? step}</div>
         <div className="flex gap-1.5 mt-2">
           {order.map((s, i) => (
             <span

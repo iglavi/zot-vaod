@@ -13,11 +13,13 @@ import os
 import sys
 from datetime import date
 
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from flask import Flask, Response, request  # noqa: E402
 
 from zot import ai_search  # noqa: E402
+from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
 
@@ -68,7 +70,7 @@ def ai_endpoint():
             yield _sse("done", {})
             return
 
-        yield _sse("sources", {"verdicts": verdicts})
+        yield _sse("sources", {"verdicts": add_download_urls(verdicts)})
         yield _sse("step", {"step": "answering"})
         try:
             for chunk in ai_search.answer_stream(

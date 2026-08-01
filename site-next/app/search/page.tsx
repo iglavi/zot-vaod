@@ -1,7 +1,9 @@
 "use client";
-import { useState } from "react";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { VerdictCard } from "@/components/VerdictCard";
+import { ThinkingSteps } from "@/components/ThinkingSteps";
+import { useState, useEffect, useRef } from "react";
 
 type Verdict = {
   id: number;
@@ -12,11 +14,13 @@ type Verdict = {
   filed_date: string;
   judge: string;
   decision_type: string;
+  docx_url?: string | null;
+  pdf_url?: string | null;
 };
 
 const emptyForm = {
   name: "", judge: "", case_number: "", city: "", court_type: "",
-  case_type: "", date_from: "", date_to: "", free_text: "", match_mode: "any",
+  case_type: "", date_from: "", date_to: "", free_text: "", match_mode: "exact",
 };
 
 export default function SearchPage() {
@@ -25,6 +29,7 @@ export default function SearchPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<string | null>(null);
 
   function set<K extends keyof typeof form>(key: K, val: string) {
     setForm((f) => ({ ...f, [key]: val }));
@@ -34,6 +39,8 @@ export default function SearchPage() {
     e?.preventDefault();
     setLoading(true);
     setError(null);
+    setStep("received");
+    const stepTimer = setTimeout(() => setStep("retrieving"), 400);
     try {
       const params = new URLSearchParams(
         Object.entries(form).filter(([, v]) => v).map(([k, v]) => [k, v])
@@ -46,7 +53,9 @@ export default function SearchPage() {
     } catch (err: any) {
       setError(err.message ?? "שגיאה בחיפוש");
     } finally {
+      clearTimeout(stepTimer);
       setLoading(false);
+      setStep(null);
     }
   }
 
@@ -87,10 +96,40 @@ export default function SearchPage() {
                 onChange={(e) => set("free_text", e.target.value)} />
             </Field>
           </div>
+          <div className="mt-5">
+            <span className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</span>
+            <div className="flex items-center gap-6 text-sm">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="match_mode"
+                  checked={form.match_mode === "exact"}
+                  onChange={() => set("match_mode", "exact")}
+                  className="accent-green-700"
+                />
+                התאמה מדויקת
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="match_mode"
+                  checked={form.match_mode === "any"}
+                  onChange={() => set("match_mode", "any")}
+                  className="accent-green-700"
+                />
+                התאמה חלקית
+              </label>
+            </div>
+          </div>
           <button type="submit" disabled={loading} className="btn-primary mt-6 w-full md:w-auto">
             {loading ? "מחפש…" : "ביצוע חיפוש במאגר"}
           </button>
           {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+          {step && (
+            <div className="mt-4">
+              <ThinkingSteps step={step} labels={{ received: "קיבלתי את הבקשה…", retrieving: "מחפש בהתאמה למאגר…" }} order={["received", "retrieving"]} />
+            </div>
+          )}
         </form>
 
         {results && (
@@ -98,17 +137,7 @@ export default function SearchPage() {
             <h2 className="text-sm text-muted mb-4">נמצאו {total.toLocaleString("he")} תוצאות</h2>
             <div className="space-y-3">
               {results.map((v) => (
-                <div key={v.id} className="card p-5 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="font-medium text-ink">{v.parties || "ללא שם צדדים"}</div>
-                    <div className="text-xs text-muted mt-1">
-                      {v.court} · {v.decision_date || v.filed_date} · {v.judge}
-                    </div>
-                  </div>
-                  <span className="text-xs bg-green-100 text-green-800 rounded-full px-3 py-1">
-                    {v.case_number}
-                  </span>
-                </div>
+                <VerdictCard key={v.id} v={v} />
               ))}
               {results.length === 0 && (
                 <p className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</p>

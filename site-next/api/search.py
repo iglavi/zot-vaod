@@ -3,11 +3,13 @@
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from flask import Flask, jsonify, request  # noqa: E402
 
 from zot import search as zot_search  # noqa: E402
+from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
 
@@ -38,7 +40,7 @@ def do_search():
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
-    return jsonify({"results": rows, "total": total, "page": page, "per_page": limit})
+    return jsonify({"results": add_download_urls(rows), "total": total, "page": page, "per_page": limit})
 
 
 @app.route("/api/search/options", methods=["GET"])

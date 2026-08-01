@@ -4,10 +4,12 @@ import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ThinkingSteps } from "@/components/ThinkingSteps";
+import { SourceCard } from "@/components/VerdictCard";
 
 type Source = {
   id: number; case_number: string; parties: string; court: string;
   decision_date: string; filed_date: string;
+  docx_url?: string | null; pdf_url?: string | null;
 };
 type Turn = {
   role: "user" | "assistant";
@@ -22,7 +24,7 @@ export function AiChat() {
   const [step, setStep] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const startedRef = useRef(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const q = params.get("q");
@@ -33,9 +35,14 @@ export function AiChat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // גוללים לאזור "תהליך החשיבה" רק כשהשלב עצמו משתנה (קיבלתי/מנתח/מחפש/
+  // מנסח) - לא בכל תו שמוזרם בתשובה. זה מה שמונע מהעמוד "למשוך" את
+  // המשתמש למטה כל הזמן בזמן שהתשובה נכתבת, ומאפשר לו לגלול בחופשיות.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns, step]);
+    if (step) {
+      stepRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [step]);
 
   async function send(question: string) {
     if (!question.trim()) return;
@@ -142,12 +149,7 @@ export function AiChat() {
                       </div>
                       <div className="space-y-2">
                         {t.sources.map((s) => (
-                          <div key={s.id} className="text-xs border-t border-border pt-2 first:border-0 first:pt-0">
-                            <div className="font-medium text-ink">{s.parties}</div>
-                            <div className="text-muted">
-                              {s.court} · {s.decision_date || s.filed_date} · {s.case_number}
-                            </div>
-                          </div>
+                          <SourceCard key={s.id} v={s} />
                         ))}
                       </div>
                     </div>
@@ -156,8 +158,11 @@ export function AiChat() {
                 </div>
               </div>
             ))}
-            {step && <ThinkingSteps step={step} />}
-            <div ref={bottomRef} />
+            {step && (
+              <div ref={stepRef} className="scroll-mt-24">
+                <ThinkingSteps step={step} />
+              </div>
+            )}
           </div>
 
           <form
