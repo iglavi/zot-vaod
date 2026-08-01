@@ -30,6 +30,13 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
+  const [options, setOptions] = useState<{ court_types: string[]; case_types: string[] }>({ court_types: [], case_types: [] });
+
+  useEffect(() => {
+    fetch("/api/search/options").then((r) => r.json()).then((d) => {
+      if (!d.error) setOptions({ court_types: d.court_types ?? [], case_types: d.case_types ?? [] });
+    }).catch(() => {});
+  }, []);
 
   function set<K extends keyof typeof form>(key: K, val: string) {
     setForm((f) => ({ ...f, [key]: val }));
@@ -80,6 +87,18 @@ export default function SearchPage() {
             </Field>
             <Field label="עיר / מחוז">
               <input className="input-field" value={form.city} onChange={(e) => set("city", e.target.value)} />
+            </Field>
+            <Field label="סוג בית משפט">
+              <select className="input-field" value={form.court_type} onChange={(e) => set("court_type", e.target.value)}>
+                <option value="">הכל</option>
+                {options.court_types.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="סוג הליך">
+              <select className="input-field" value={form.case_type} onChange={(e) => set("case_type", e.target.value)}>
+                <option value="">הכל</option>
+                {options.case_types.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
             </Field>
             <Field label="מתאריך">
               <input type="date" className="input-field" value={form.date_from}
