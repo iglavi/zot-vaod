@@ -73,6 +73,7 @@ export function AiChat() {
     let buf = "";
     let assistantText = "";
     let sources: Source[] = [];
+    let sawTerminalEvent = false;
     setTurns((t) => [...t, { role: "assistant", text: "" }]);
 
     while (true) {
@@ -112,8 +113,26 @@ export function AiChat() {
             return copy;
           });
         }
-        if (event === "done" || event === "error") setStep(null);
+        if (event === "done" || event === "error") {
+          sawTerminalEvent = true;
+          setStep(null);
+        }
       }
+    }
+
+    // ההזרמה נסגרה (חיבור נסגר, למשל timeout של פונקציית ה-serverless)
+    // בלי אירוע "done"/"error" מפורש - בלעדי הטיפול הזה נשאר לנצח "מנסח
+    // תשובה..." תקוע על המסך עם טקסט חלקי, אף שהחיבור כבר מת בפועל.
+    if (!sawTerminalEvent) {
+      setStep(null);
+      assistantText += assistantText
+        ? "\n\n⚠️ התשובה נקטעה (החיבור נסגר). נסו לשאול שוב."
+        : "⚠️ לא התקבלה תשובה (החיבור נסגר). נסו לשאול שוב.";
+      setTurns((t) => {
+        const copy = [...t];
+        copy[copy.length - 1] = { ...copy[copy.length - 1], text: assistantText };
+        return copy;
+      });
     }
   }
 
