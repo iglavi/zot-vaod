@@ -11,9 +11,9 @@ const NAV = [
 export function Header({ active = "/" }: { active?: string }) {
   return (
     <header className="border-b border-border bg-cream/95 backdrop-blur sticky top-0 z-30">
-      <div className="container-page h-[76px] flex items-center justify-between">
+      <div className="container-page min-h-[76px] py-3 flex items-center justify-between flex-wrap gap-3">
         <Logo iconSize={34} />
-        <nav className="flex items-center gap-2 text-sm">
+        <nav className="flex items-center gap-1.5 sm:gap-2 text-sm flex-wrap">
           {NAV.map((item) => {
             const isActive = item.href === active;
             return (

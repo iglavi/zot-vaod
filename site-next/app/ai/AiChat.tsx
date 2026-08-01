@@ -45,18 +45,29 @@ export function AiChat() {
   }, [step]);
 
   async function send(question: string) {
-    if (!question.trim()) return;
+    if (!question.trim() || step !== null) return; // מונע שליחה כפולה בזמן ששאלה קודמת עוד בתהליך
     const history = turns.map((t) => ({ role: t.role, content: t.text }));
     setTurns((t) => [...t, { role: "user", text: question }]);
     setInput("");
     setStep("received");
 
-    const res = await fetch("/api/ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, history }),
-    });
-    if (!res.body) return;
+    let res: Response;
+    try {
+      res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, history }),
+      });
+    } catch {
+      setTurns((t) => [...t, { role: "assistant", text: "שגיאת תקשורת - נסו שוב." }]);
+      setStep(null);
+      return;
+    }
+    if (!res.ok || !res.body) {
+      setTurns((t) => [...t, { role: "assistant", text: "אירעה שגיאה בשרת. נסו שוב בעוד רגע." }]);
+      setStep(null);
+      return;
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -121,7 +132,7 @@ export function AiChat() {
           {sidebarOpen ? "הסתרת היסטוריית שיחות" : "הצגת היסטוריית שיחות"}
         </button>
       </div>
-      <div className="container-page pb-8 grid gap-2" style={{ gridTemplateColumns: sidebarOpen ? "260px 1fr" : "1fr" }}>
+      <div className={`container-page pb-8 grid gap-2 grid-cols-1 ${sidebarOpen ? "md:grid-cols-[260px_1fr]" : ""}`}>
         {sidebarOpen && (
           <aside className="pl-8 border-l border-border ml-2 hidden md:block">
             <button className="btn-outline w-full mb-4" onClick={() => { setTurns([]); startedRef.current = true; }}>
@@ -169,12 +180,15 @@ export function AiChat() {
             onSubmit={(e) => { e.preventDefault(); send(input); }}
             className="card flex items-center gap-3 p-2 pr-3 mt-8 sticky bottom-6"
           >
-            <button type="submit" className="btn-primary shrink-0">שאלה חדשה</button>
+            <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+              {step !== null ? "מעבד…" : "שאלה חדשה"}
+            </button>
             <input
               value={input}
+              disabled={step !== null}
               onChange={(e) => setInput(e.target.value)}
               placeholder="הקלידו שאלה, נוסחו מסמך כאן... (לדוגמה: 'איך מוגדרת עילת הסבירות?')"
-              className="flex-1 bg-transparent outline-none text-sm py-2"
+              className="flex-1 bg-transparent outline-none text-sm py-2 disabled:opacity-60"
             />
           </form>
         </main>
