@@ -25,10 +25,7 @@ def safe_db_call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except Exception as e:  # noqa: BLE001
         print(f"safe_db_call: {fn.__name__} failed: {type(e).__name__}: {e}")
-        # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
-        # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
-        st.error(f"אירעה תקלה זמנית בטעינת הנתונים ({fn.__name__}): "
-                 f"{type(e).__name__}: {e}")
+        st.error("אירעה תקלה זמנית בטעינת הנתונים. נסו לרענן את הדף בעוד רגע.")
         st.stop()
 
 st.set_page_config(page_title="גילוי נאות — חיפוש הליכים משפטיים",
@@ -284,10 +281,7 @@ def render_card(row, highlight_terms: list[str] | None = None, key_prefix: str =
         except Exception as e:  # noqa: BLE001
             print(f"render_card: failed to render verdict id={row['id']}: "
                   f"{type(e).__name__}: {e}")
-            # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
-            # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
-            st.caption(f"⚠️ אירעה תקלה בהצגת פסק הדין המלא ({type(e).__name__}: {e}). "
-                       f"פרטי התיק שלמעלה עדיין תקינים.")
+            st.caption("⚠️ אירעה תקלה בהצגת פסק הדין המלא. פרטי התיק שלמעלה עדיין תקינים.")
     else:
         st.caption("ℹ️ קובץ פסק הדין המלא אינו זמין במאגר המקומי (קיימים רק פרטי המטא-דאטה).")
 
@@ -336,21 +330,18 @@ def _cached_simple_search_meta():
                 [""] + search.court_type_options(),
                 [""] + search.court_city_options(),
                 [""] + search.distinct_proceedings(),
-                [""] + search.distinct_case_types(), "")
+                [""] + search.distinct_case_types())
     except Exception as e:  # noqa: BLE001
         print(f"_cached_simple_search_meta: failed: {type(e).__name__}: {e}")
-        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""], [""],
-                f"{type(e).__name__}: {e}")
+        return (False, {"total": 0, "with_documents": 0}, [""], [""], [""], [""])
 
 
 def tab_simple():
     if not ensure_index_ui():
         return
-    ok, s, court_types, cities, proceedings, case_types, err = _cached_simple_search_meta()
+    ok, s, court_types, cities, proceedings, case_types = _cached_simple_search_meta()
     if not ok:
-        # זמני: פרטי השגיאה המלאים מוצגים כרגע כי האתר עדיין לא פורסם
-        # למשתמשים אמיתיים - יש להחזיר להודעה הלקונית לפני פרסום.
-        st.error(f"אירעה תקלה זמנית בטעינת נתוני החיפוש: {err}")
+        st.error("אירעה תקלה זמנית בטעינת נתוני החיפוש. נסו לרענן את הדף בעוד רגע.")
         return
     st.caption(f"במאגר: {s['with_documents']:,} החלטות")
 
@@ -526,23 +517,23 @@ def tab_ai():
                 {"role": "assistant", "text": msg, "verdicts": [], "is_followup": is_followup})
             return
 
-        answer_box = st.empty()
-        collected = []
+        # st.write_stream (לא לולאת st.empty() ידנית + עדכון-per-token) - הלולאה
+        # הידנית הקודמת שלחה עדכון WebSocket נפרד לכל טוקן; באתר חי (לא
+        # localhost) זה חשוף לכך שה-delta האחרון (זה שמסיר את סמן ה-"▌")
+        # יאבד בדרך על רשת אמיתית, והתשובה נשארת "תקועה" חזותית עם הסמן
+        # למרות שהשרת סיים בהצלחה. st.write_stream מטפל בזה נכון (batching
+        # פנימי) ומחזיר את הטקסט המלא המצורף ישירות.
         try:
-            for chunk in ai_search.answer_stream(client, question, verdicts,
-                                                 total_count=total_count,
-                                                 court_scope=analysis.get("court_scope", ""),
-                                                 court_type=analysis.get("court_type", ""),
-                                                 history=history):
-                collected.append(chunk)
-                answer_box.markdown("".join(collected) + "▌")
-            answer_box.markdown("".join(collected))
+            answer_text = st.write_stream(
+                ai_search.answer_stream(client, question, verdicts,
+                                        total_count=total_count,
+                                        court_scope=analysis.get("court_scope", ""),
+                                        court_type=analysis.get("court_type", ""),
+                                        history=history))
         except Exception as e:  # noqa: BLE001
             st.error(f"שגיאה בקבלת תשובה מהמודל: {e}")
             st.session_state["ai_chat"].pop()
             return
-
-        answer_text = "".join(collected)
         with st.expander(f"פסקי הדין ששימשו למענה ({len(verdicts)})"):
             for v in verdicts:
                 render_card(v, key_prefix="aicur")
