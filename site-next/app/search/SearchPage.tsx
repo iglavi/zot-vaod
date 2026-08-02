@@ -22,8 +22,14 @@ type Verdict = {
 
 const emptyForm = {
   name: "", judge: "", case_number: "",
-  date_from: "", date_to: "", free_text: "", match_mode: "exact",
+  date_from: "", date_to: "", free_text: "", match_mode: "exact", sort: "newest",
 };
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "newest", label: "מהחדש לישן" },
+  { value: "oldest", label: "מהישן לחדש" },
+  { value: "relevance", label: "רלוונטיות" },
+];
 
 export default function SearchPage() {
   const router = useRouter();
@@ -131,6 +137,13 @@ export default function SearchPage() {
             <Field label="חיפוש חופשי בטקסט">
               <input className="input-field" placeholder="מילים בגוף פסק הדין" value={form.free_text}
                 onChange={(e) => set("free_text", e.target.value)} />
+            </Field>
+          </div>
+          <div className="mt-5">
+            <Field label="מיון תוצאות">
+              <select className="input-field" value={form.sort} onChange={(e) => set("sort", e.target.value)}>
+                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </Field>
           </div>
           <div className="mt-5">
