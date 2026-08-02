@@ -48,11 +48,13 @@ export default function DocsPage() {
         </p>
         <div className="card p-5 mb-8 bg-amber-50 border-amber-200">
           <p className="text-sm text-ink/80 leading-relaxed">
-            <strong>ללא הסכם רמת-שירות (SLA):</strong> ה-API הזה משרת גם את
-            האתר עצמו, ואין כרגע הבטחת זמינות, תמיכה בגרסאות, או התראה
-            מראש על שינויים. שימוש בהיקף גדול (crawling מסיבי) עלול
-            להיחסם. לשאלות או בקשות שיתוף-פעולה - ראו פרטי יצירת קשר
-            בעמוד <a href="/about" className="underline hover:text-green-900">אודות</a>.
+            <strong>ללא הסכם רמת-שירות (SLA), עם הגבלת קצב:</strong> ה-API
+            הזה משרת גם את האתר עצמו, ואין כרגע הבטחת זמינות, תמיכה
+            בגרסאות, או התראה מראש על שינויים. <code>/api/search</code> מוגבל
+            ל-30 בקשות לדקה מכל כתובת IP (מחזיר <code>429</code> מעבר לכך) -
+            לשימוש מחקרי סביר זה לא אמור להפריע; לגירוד מסיבי של כל המאגר
+            כן. לשאלות או בקשות שיתוף-פעולה בהיקף גדול יותר - ראו פרטי
+            יצירת קשר בעמוד <a href="/about" className="underline hover:text-green-900">אודות</a>.
           </p>
         </div>
 
@@ -119,7 +121,7 @@ export default function DocsPage() {
         <h2 className="text-xl font-semibold text-green-900 mt-8 mb-3">GET /api/search/options</h2>
         <Endpoint method="GET" path="/api/search/options">
           <p className="text-sm text-ink/80">רשימות הערכים הקיימים בפועל במאגר, לשימוש בתפריטי סינון.</p>
-          <Code>{`{ "court_types": ["שלום", "מחוזי", "..."], "case_types": ["...", "..."] }`}</Code>
+          <Code>{`{ "court_types": ["שלום", "מחוזי", "..."], "cities": ["...", "..."], "case_types": ["...", "..."] }`}</Code>
         </Endpoint>
 
         <h2 className="text-xl font-semibold text-green-900 mt-8 mb-3">GET /api/coverage</h2>

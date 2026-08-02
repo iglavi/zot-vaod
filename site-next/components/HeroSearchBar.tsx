@@ -29,7 +29,7 @@ export function HeroSearchBar() {
       </div>
       <div className="text-center mt-3 text-sm text-muted">
         <a href="/search" className="text-green-700 underline hover:text-green-900">
-          מעבר לחיפוש מתקדם ומובנה
+          מעבר לחיפוש מובנה
         </a>
         {" — "}רוצים לחפש לפי שם בעל דין, שם השופט או מספר הליך?
       </div>

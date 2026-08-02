@@ -4,7 +4,7 @@ import { Logo } from "./Logo";
 const NAV = [
   { href: "/", label: "בית" },
   { href: "/ai", label: "חיפוש AI" },
-  { href: "/search", label: "חיפוש מתקדם" },
+  { href: "/search", label: "חיפוש מובנה" },
   { href: "/about", label: "אודות היוזמה" },
 ];
 

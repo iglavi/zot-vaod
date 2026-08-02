@@ -4,6 +4,8 @@ import html
 import os
 import re
 import sys
+import time
+from collections import defaultdict, deque
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -17,6 +19,32 @@ app = Flask(__name__)
 
 _SNIPPET_CONTEXT_CHARS = 160
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+# הגבלת-קצב פשוטה למניעת גירוד-מסה של כל המאגר דרך ה-API (כל שורת תוצאה
+# כוללת pdf_url/docx_url - קישור ישיר לקובץ המלא). זו הגנה per-instance
+# בזיכרון, לא מבוזרת: כל instance קר/warm של הפונקציה השרתית מחזיק מונה
+# משלו, אז לקוח שמפזר בקשות על פני הרבה instances (או IPs) יכול לעקוף
+# את זה - אבל זה מספיק כדי להפוך גירוד נאיבי-חד-חוטי לאיטי משמעותית, בלי
+# תלות בתשתית חיצונית (Redis/KV) שלא קיימת כרגע בפרויקט.
+_RATE_LIMIT_WINDOW_S = 60
+_RATE_LIMIT_MAX_REQUESTS = 30
+_request_log: dict[str, deque] = defaultdict(deque)
+
+
+def _client_ip() -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else None) or request.remote_addr or "unknown"
+
+
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    log = _request_log[ip]
+    while log and now - log[0] > _RATE_LIMIT_WINDOW_S:
+        log.popleft()
+    if len(log) >= _RATE_LIMIT_MAX_REQUESTS:
+        return True
+    log.append(now)
+    return False
 
 
 def _build_snippet(text: str, terms: list[str]) -> str | None:
@@ -49,6 +77,8 @@ def _build_snippet(text: str, terms: list[str]) -> str | None:
 
 @app.route("/api/search", methods=["GET"])
 def do_search():
+    if _rate_limited(_client_ip()):
+        return jsonify({"error": "יותר מדי בקשות מאותה כתובת - נסו שוב בעוד דקה."}), 429
     try:
         # תקרה עליונה שפויה (לא רק page<1): total עצמו כבר מוגבל ל-
         # _BROAD_FILTER_CAP (5,000 / 10-לעמוד = עמוד 500 לכל היותר), אז
@@ -112,6 +142,7 @@ def options():
     try:
         return jsonify({
             "court_types": zot_search.court_type_options(),
+            "cities": zot_search.court_city_options(),
             "case_types": zot_search.distinct_case_types(),
         })
     except Exception as e:  # noqa: BLE001

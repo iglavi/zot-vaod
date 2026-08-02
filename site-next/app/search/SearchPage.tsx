@@ -40,7 +40,7 @@ function groupByCase(results: Verdict[]): Verdict[][] {
 
 const emptyForm = {
   name: "", judge: "", case_number: "", city: "", court_type: "",
-  case_type: "", date_from: "", date_to: "", free_text: "", match_mode: "exact",
+  date_from: "", date_to: "", free_text: "", match_mode: "exact",
 };
 
 export default function SearchPage() {
@@ -55,12 +55,12 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
-  const [options, setOptions] = useState<{ court_types: string[]; case_types: string[] }>({ court_types: [], case_types: [] });
+  const [options, setOptions] = useState<{ court_types: string[]; cities: string[] }>({ court_types: [], cities: [] });
   const [page, setPage] = useState(1);
 
   useEffect(() => {
     fetch("/api/search/options").then((r) => r.json()).then((d) => {
-      if (!d.error) setOptions({ court_types: d.court_types ?? [], case_types: d.case_types ?? [] });
+      if (!d.error) setOptions({ court_types: d.court_types ?? [], cities: d.cities ?? [] });
     }).catch(() => {});
   }, []);
 
@@ -126,26 +126,6 @@ export default function SearchPage() {
   const perPage = 10;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
-  // ייצוא CSV של עמוד התוצאות הנוכחי (לא כל ההתאמות - מייצוא כלל
-  // ההתאמות היה דורש קריאת-שרת נוספת נפרדת). BOM בתחילת הקובץ - בלעדיו
-  // Excel נוטה לפרש עברית ב-UTF-8 בקידוד שגוי ולהציג ג'יבריש.
-  function exportCsv() {
-    if (!results || results.length === 0) return;
-    const cols = ["מספר הליך", "צדדים", "בית משפט", "תאריך", "שופט/ת", "סוג החלטה"];
-    const rows = results.map((v) => [
-      v.case_number, v.parties, v.court, v.decision_date || v.filed_date || "", v.judge, v.decision_type,
-    ]);
-    const escape = (s: string) => `"${(s ?? "").replace(/"/g, '""')}"`;
-    const csv = [cols, ...rows].map((r) => r.map(escape).join(",")).join("\r\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `giluy-naot-חיפוש-עמוד-${page}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
     <>
       <Header active="/search" />
@@ -166,18 +146,15 @@ export default function SearchPage() {
                 onChange={(e) => set("judge", e.target.value)} />
             </Field>
             <Field label="עיר / מחוז">
-              <input className="input-field" value={form.city} onChange={(e) => set("city", e.target.value)} />
+              <select className="input-field" value={form.city} onChange={(e) => set("city", e.target.value)}>
+                <option value="">הכל</option>
+                {options.cities.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
             </Field>
             <Field label="סוג בית משפט">
               <select className="input-field" value={form.court_type} onChange={(e) => set("court_type", e.target.value)}>
                 <option value="">הכל</option>
                 {options.court_types.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
-            <Field label="סוג הליך">
-              <select className="input-field" value={form.case_type} onChange={(e) => set("case_type", e.target.value)}>
-                <option value="">הכל</option>
-                {options.case_types.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </Field>
             <Field label="מתאריך">
@@ -237,20 +214,21 @@ export default function SearchPage() {
               <h2 className="text-sm text-muted">
                 נמצאו {capped ? "מעל " : ""}{total.toLocaleString("he")} תוצאות
               </h2>
-              {results.length > 0 && (
-                <button onClick={exportCsv} className="btn-outline text-xs px-3 py-1.5">
-                  ייצוא עמוד זה ל-CSV
-                </button>
-              )}
             </div>
             <div className="space-y-3">
-              {groupedResults.map((group) =>
-                group.length > 1 ? (
-                  <CaseGroupCard key={`${group[0].court} ${group[0].case_number}`} items={group} />
-                ) : (
-                  <VerdictCard key={group[0].id} v={group[0]} />
-                )
-              )}
+              {groupedResults.map((group, i) => {
+                const num = (page - 1) * perPage + i + 1;
+                return (
+                  <div key={`${group[0].court} ${group[0].case_number}`} className="flex items-start gap-3">
+                    <span className="text-xs text-muted w-7 shrink-0 text-left pt-5 tabular-nums" dir="ltr">
+                      {num}.
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      {group.length > 1 ? <CaseGroupCard items={group} /> : <VerdictCard v={group[0]} />}
+                    </div>
+                  </div>
+                );
+              })}
               {results.length === 0 && (
                 <p className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</p>
               )}
