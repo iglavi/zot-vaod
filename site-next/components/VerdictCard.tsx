@@ -60,10 +60,11 @@ export function VerdictCard({ v }: { v: Verdict }) {
   );
 }
 
-/** כרטיס מקור מצוטט בתשובת ה-AI: מספר ההליך יחד ולפני שמות הצדדים, באותה שורה. */
-export function SourceCard({ v }: { v: Verdict }) {
+/** כרטיס מקור מצוטט בתשובת ה-AI: מספר ההליך יחד ולפני שמות הצדדים, באותה שורה.
+ * id אופציונלי - עוגן לקישור-ציטוט מתוך טקסט התשובה עצמו (ראו AiChat.tsx). */
+export function SourceCard({ v, id }: { v: Verdict; id?: string }) {
   return (
-    <div className="text-xs border-t border-border pt-2 first:border-0 first:pt-0">
+    <div id={id} className="text-xs border-t border-border pt-2 first:border-0 first:pt-0 scroll-mt-24">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="font-medium text-ink">
           {v.case_number}

@@ -42,6 +42,41 @@ function saveConversations(list: Conversation[]) {
   }
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** מפצל את טקסט התשובה לקטעים, והופך כל הופעה של מספר-תיק שמופיע גם
+ * ברשימת המקורות לקישור-עוגן לכרטיס המקור המתאים (id="source-{turnIndex}-{s.id}").
+ * מיון לפי אורך יורד לפני בניית ה-regex - מונע התאמה-חלקית שגויה כשמספר
+ * תיק אחד הוא תת-מחרוזת של אחר. */
+function renderAnswerWithCitationLinks(text: string, sources: Source[] | undefined, turnIndex: number) {
+  const withNumbers = (sources ?? []).filter((s) => s.case_number);
+  if (withNumbers.length === 0) return text;
+  const byNumber = new Map(withNumbers.map((s) => [s.case_number, s]));
+  const sorted = [...byNumber.keys()].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(`(${sorted.map(escapeRegExp).join("|")})`, "g");
+  const parts = text.split(pattern);
+  return parts.map((part, i) => {
+    const source = byNumber.get(part);
+    if (!source) return part;
+    return (
+      <a
+        key={i}
+        href={`#source-${turnIndex}-${source.id}`}
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById(`source-${turnIndex}-${source.id}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}
+        className="text-green-700 underline hover:text-green-900"
+      >
+        {part}
+      </a>
+    );
+  });
+}
+
 export function AiChat() {
   const params = useSearchParams();
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -274,12 +309,14 @@ export function AiChat() {
                       </div>
                       <div className="space-y-2">
                         {t.sources.map((s) => (
-                          <SourceCard key={s.id} v={s} />
+                          <SourceCard key={s.id} v={s} id={`source-${i}-${s.id}`} />
                         ))}
                       </div>
                     </div>
                   )}
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{t.text}</p>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {t.role === "assistant" ? renderAnswerWithCitationLinks(t.text, t.sources, i) : t.text}
+                  </p>
                 </div>
               </div>
             ))}
