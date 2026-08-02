@@ -214,7 +214,7 @@ export function AiChat() {
             className="card flex items-center gap-3 p-2 pr-3 mt-8 sticky bottom-6"
           >
             <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step !== null ? "מעבד…" : "שאלה חדשה"}
+              {step !== null ? "מעבד…" : "שאלו"}
             </button>
             <input
               value={input}
