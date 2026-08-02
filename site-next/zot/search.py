@@ -739,6 +739,18 @@ def _is_supreme_row(row: dict) -> bool:
     return bool(row.get("is_supreme"))
 
 
+def _court_tier(row: dict) -> int:
+    """עליון(0) > מחוזי(1) > שלום(2) > הכל השאר(3) - ראו _diversify_supreme."""
+    if _is_supreme_row(row):
+        return 0
+    court = row.get("court") or ""
+    if "מחוזי" in court:
+        return 1
+    if "שלום" in court:
+        return 2
+    return 3
+
+
 def _diversify_supreme(rows: list, limit: int) -> list:
     """מוודא ייצוג של פסיקת בית המשפט העליון במדגם המוצג ל-AI, גם כשדירוג
     BM25 הגולמי מעדיף פסקי דין שגרתיים מערכאות נמוכות (שלעיתים חוזרים על
@@ -746,17 +758,22 @@ def _diversify_supreme(rows: list, limit: int) -> list:
     יותר) — כדי שתשובה על שאלה רחבה לא תתבסס רק על תקדימים שוליים בעוד
     פסיקה מנחה של העליון על אותו נושא כלל לא נכנסת ל-top-K. פועל רק
     כש-court_scope ריק (המשתמש לא ביקש במפורש עליון/לא-עליון בלבד) —
-    אחרת זה יסתור את מה שהמשתמש ביקש בפירוש."""
+    אחרת זה יסתור את מה שהמשתמש ביקש בפירוש.
+
+    בנוסף (F-2): מדרג את סדר-ההצגה הסופי לפי היררכיית ערכאות (עליון >
+    מחוזי > שלום > השאר), לא רק מבטיח ייצוג - בלעדי זה נמצא בפועל שפסיקה
+    מנחה של העליון הוצגה *אחרונה* מתוך 20 מקורות (BM25 גולמי לא מבחין בין
+    חשיבות-משפטית לצפיפות-מילולית). בתוך כל דרג, נשמר סדר-BM25 היחסי
+    המקורי (מיון-משני לפי אינדקס)."""
     supreme_idx = [i for i, r in enumerate(rows) if _is_supreme_row(r)]
-    if not supreme_idx:
-        return rows
-    n_supreme = min(len(supreme_idx), max(1, limit // 2))
+    n_supreme = min(len(supreme_idx), max(1, limit // 2)) if supreme_idx else 0
     keep = set(supreme_idx[:n_supreme])
     for i in range(len(rows)):
         if len(keep) >= limit:
             break
         keep.add(i)
-    return [rows[i] for i in sorted(keep)]
+    ordered = sorted(keep, key=lambda i: (_court_tier(rows[i]), i))
+    return [rows[i] for i in ordered]
 
 
 def count_verdicts(*, court_scope: str = "", court_names: list[str] | None = None, fts_query: str = "",
