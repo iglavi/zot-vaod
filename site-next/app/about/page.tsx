@@ -8,11 +8,19 @@ export default function AboutPage() {
       <main id="main-content" className="container-page py-16">
         <h1 className="font-display text-3xl text-green-900 mb-4">למה צריך את זה?</h1>
         <p className="text-sm leading-relaxed text-ink/80 max-w-3xl">
-          דו&quot;ח מבקר המדינה משנת 2022 קבע שממולץ כי המידע באתר נט-המשפט
-          שמנהלת רשות השופטת יונגש בכלואי אפשרויות חיפוש תוך מתן אפשרות
-          אחזור וייצוא אחזור וניתוח מידע מתקדם, אשר יבטיחו לציבור גישה
+          דו&quot;ח מבקר המדינה משנת 2022 קבע כי מומלץ שהמידע באתר נט-המשפט
+          שמנהלת הרשות השופטת יונגש בכלים ואפשרויות חיפוש מתקדמים, תוך מתן
+          אפשרות אחזור, ייצוא וניתוח מידע מתקדם, אשר יבטיחו לציבור גישה
           מלאה למידע המשפטי שאינו מסווג, כך שכל אזרח יוכל ליהנות מהמידע
-          המצוי באתר, ללא תלות ברכישת תוכנה מגורמים מסחריים.
+          המצוי באתר, ללא תלות ברכישת תוכנה מגורמים מסחריים.{" "}
+          <a
+            href="https://library.mevaker.gov.il/sites/DigitalLibrary/Documents/2022/2022.3/2022.3-304-NET.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-green-700 underline hover:text-green-900"
+          >
+            לדוח המלא
+          </a>
         </p>
       </main>
       <section className="container-page pb-16 grid md:grid-cols-2 gap-12">
@@ -36,14 +44,36 @@ export default function AboutPage() {
           </p>
         </div>
       </section>
+      <section className="container-page pb-16">
+        <h2 className="text-xl font-semibold text-green-900 mb-2">היקף הכיסוי ומגבלותיו</h2>
+        <p className="text-sm text-ink/80 leading-relaxed max-w-3xl">
+          המאגר מתעדכן באופן שוטף ומורחב לאחור בהדרגה, אך הכיסוי אינו
+          מלא: חלק מהחלטות ופסקי הדין כלל אינם מתפרסמים על ידי בתי המשפט
+          עצמם (למשל בשל צווי איסור פרסום), וייתכנו טווחי תאריכים או
+          ערכאות שהכיסוי לגביהם עדיין חלקי בזמן שהמאגר ממשיך להיבנות.
+          המידע מבוסס על מה שפורסם בפועל באתרי הרשות השופטת ובית המשפט
+          העליון - לא על מדגם מייצג סטטיסטית של כלל ההליכים המשפטיים
+          בישראל.
+        </p>
+      </section>
       <section className="container-page pb-20">
         <div className="bg-green-700 text-white rounded-xl2 py-16 px-8 text-center">
           <div className="font-display text-5xl mb-4">4.2 מיליון ש&quot;ח</div>
           <p className="max-w-xl mx-auto text-green-50 text-sm leading-relaxed">
-            הסכום ששילמה הרשות השופטת בתי המשפט לגורמים מסחריים עבור גישה
-            למידע שמעורכתיתה מעצמה בשנים 2016–2019
+            הסכום ששילמה הרשות השופטת לגורמים מסחריים עבור גישה למידע
+            שהיא עצמה מייצרת, בשנים 2016–2019
           </p>
-          <p className="text-xs text-green-200 mt-3">מקור: דו&quot;ח מבקר המדינה, 2022</p>
+          <p className="text-xs text-green-200 mt-3">
+            מקור:{" "}
+            <a
+              href="https://library.mevaker.gov.il/sites/DigitalLibrary/Documents/2022/2022.3/2022.3-304-NET.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-white"
+            >
+              דו&quot;ח מבקר המדינה, 2022
+            </a>
+          </p>
         </div>
       </section>
       <Footer />
