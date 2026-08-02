@@ -12,6 +12,7 @@
 import json
 import os
 import sys
+import time
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -23,6 +24,16 @@ from zot import ai_search  # noqa: E402
 from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
+
+# תקרת זמן-ריצה של הפונקציה (vercel.json: functions."api/*.py".maxDuration).
+# תשובות ארוכות לבד כבר לוקחות עד 40-48 שניות סטרימינג בפועל - קריאת
+# suggest_followups המתווספת רק *אחרי* שהתשובה הסתיימה עלולה, במקרים כאלה,
+# לדחוף את הריצה הכוללת מעבר לתקרה ולגרום ל-Vercel להרוג את הפונקציה
+# באמצע (בלי אירוע error, בלי done) - נצפה בפועל בבדיקות. פס-ביטחון: אם לא
+# נשאר מספיק זמן, פשוט מדלגים על שאלות ההמשך (done עדיין נשלח כרגיל) במקום
+# להמר על התקרה.
+_MAX_DURATION_S = 60
+_SUGGESTIONS_MIN_HEADROOM_S = 10
 
 
 def _sse(event: str, data: dict) -> str:
@@ -36,6 +47,7 @@ def ai_endpoint():
     history = body.get("history") or []
 
     def stream():
+        start = time.monotonic()
         if not question:
             yield _sse("error", {"message": "לא התקבלה שאלה."})
             return
@@ -89,9 +101,14 @@ def ai_endpoint():
 
         # שאלות המשך מוצעות - קריאה נוספת קצנה ונפרדת, אחרי שהתשובה עצמה
         # כבר הושלמה; כשל כאן לא אמור לפגוע בתשובה שכבר התקבלה בהצלחה.
-        questions = ai_search.suggest_followups(client, question, answer_text)
-        if questions:
-            yield _sse("suggestions", {"questions": questions})
+        # מדלגים אם לא נשאר מספיק זמן לפני תקרת הריצה של הפונקציה (ראו
+        # _MAX_DURATION_S למעלה) - עדיף לוותר על השאלות המוצעות מאשר לסכן
+        # הריגת הפונקציה באמצע לפני שנספיק לשלוח done.
+        elapsed = time.monotonic() - start
+        if elapsed < _MAX_DURATION_S - _SUGGESTIONS_MIN_HEADROOM_S:
+            questions = ai_search.suggest_followups(client, question, answer_text)
+            if questions:
+                yield _sse("suggestions", {"questions": questions})
         yield _sse("done", {})
 
     return Response(

@@ -16,6 +16,7 @@ export function Footer() {
           <div className="flex md:justify-end flex-wrap gap-x-6 gap-y-2 text-sm text-ink/70">
             <a href="#" className="hover:text-green-800">תרומות לתמיכה</a>
             <a href="#" className="hover:text-green-800">הצהרת נגישות</a>
+            <a href="/coverage" className="hover:text-green-800">שקיפות המאגר</a>
             <a href="/privacy" className="hover:text-green-800">מדיניות פרטיות</a>
             <a href="/terms" className="hover:text-green-800">תנאי שימוש</a>
           </div>

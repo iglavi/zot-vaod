@@ -116,3 +116,11 @@ def options():
         })
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/coverage", methods=["GET"])
+def coverage():
+    try:
+        return jsonify(zot_search.coverage_stats())
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500

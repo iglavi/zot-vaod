@@ -621,6 +621,36 @@ def stats(db_path: Path | None = None) -> dict:
     return {"total": total, "with_documents": with_docs}
 
 
+# F-14: פילוח לפי שנה/ערכאה. בכוונה *לא* GROUP BY חי על כל הטבלה - נבדק
+# בעבר בפועל (ראו _distinct_values): SELECT DISTINCT court לקח 13.5
+# שניות והפיל את כל האתר (חיבור-Hrana נקטע). במקום זה, מרכיבים את הפילוח
+# מכמה קריאות ל-count_verdicts הבטוח-כבר (MATERIALIZED CTE, לא סורק הכל)
+# - יותר round-trips, אבל כל אחד מהם קטן וכבר-מוכח באמת בפרודקשן.
+_COVERAGE_YEAR_BUCKETS = [
+    ("עד 1999", "", "1999-12-31"),
+    ("2000–2009", "2000-01-01", "2009-12-31"),
+    ("2010–2019", "2010-01-01", "2019-12-31"),
+    ("2020–2026", "2020-01-01", ""),
+]
+
+
+def coverage_stats(db_path: Path | None = None) -> dict:
+    base = stats(db_path)
+    by_year = [
+        {"label": label, "count": count_verdicts(date_from=frm, date_to=to, db_path=db_path)}
+        for label, frm, to in _COVERAGE_YEAR_BUCKETS
+    ]
+    supreme = count_verdicts(court_scope="supreme", db_path=db_path)
+    general = count_verdicts(court_scope="general", db_path=db_path)
+    return {
+        "total": base["total"],
+        "with_documents": base["with_documents"],
+        "by_year": by_year,
+        "supreme": supreme,
+        "general": general,
+    }
+
+
 def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "", court_names: list[str] | None = None,
                     date_from: str = "", date_to: str = "",
                     limit: int = config.AI_MAX_DOCS, sort: str = "relevance",

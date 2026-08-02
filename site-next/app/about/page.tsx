@@ -44,7 +44,7 @@ export default function AboutPage() {
           </p>
         </div>
       </section>
-      <section className="container-page pb-16">
+      <section id="coverage" className="container-page pb-16 scroll-mt-24">
         <h2 className="text-xl font-semibold text-green-900 mb-2">היקף הכיסוי ומגבלותיו</h2>
         <p className="text-sm text-ink/80 leading-relaxed max-w-3xl">
           המאגר מתעדכן באופן שוטף ומורחב לאחור בהדרגה, אך הכיסוי אינו
@@ -55,6 +55,9 @@ export default function AboutPage() {
           העליון - לא על מדגם מייצג סטטיסטית של כלל ההליכים המשפטיים
           בישראל.
         </p>
+        <a href="/coverage" className="inline-block mt-3 text-sm text-green-700 underline hover:text-green-900">
+          לנתוני כיסוי חיים ומספרים מלאים ←
+        </a>
       </section>
       <section className="container-page pb-20">
         <div className="bg-green-700 text-white rounded-xl2 py-16 px-8 text-center">
