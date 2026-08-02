@@ -34,13 +34,18 @@ def do_search():
             case_type=request.args.get("case_type", ""),
             date_from=request.args.get("date_from", ""),
             date_to=request.args.get("date_to", ""),
-            sort=request.args.get("sort", "relevance"),
+            sort=request.args.get("sort", "newest"),
             limit=limit,
             offset=(page - 1) * limit,
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
-    return jsonify({"results": add_download_urls(rows), "total": total, "page": page, "per_page": limit})
+    # total מוגבל בפועל ל-_BROAD_FILTER_CAP עבור חיפושים רחבים-מדי (ראו
+    # ההערה המפורטת ב-zot/search.py: simple_search) - כשמגיעים לתקרה הזו,
+    # total אינו הספירה האמיתית אלא רק "לפחות כמה" (ה-UI מציג "מעל X").
+    capped = total >= zot_search._BROAD_FILTER_CAP
+    return jsonify({"results": add_download_urls(rows), "total": total, "capped": capped,
+                    "page": page, "per_page": limit})
 
 
 @app.route("/api/search/options", methods=["GET"])

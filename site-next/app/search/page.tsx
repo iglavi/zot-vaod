@@ -27,6 +27,7 @@ export default function SearchPage() {
   const [form, setForm] = useState(emptyForm);
   const [results, setResults] = useState<Verdict[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [capped, setCapped] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export default function SearchPage() {
       if (!res.ok) throw new Error(data.error || "שגיאה בחיפוש");
       setResults(data.results);
       setTotal(data.total);
+      setCapped(Boolean(data.capped));
       setPage(targetPage);
     } catch (err: any) {
       setError(err.message ?? "שגיאה בחיפוש");
@@ -159,7 +161,9 @@ export default function SearchPage() {
 
         {results && (
           <div className="mt-10">
-            <h2 className="text-sm text-muted mb-4">נמצאו {total.toLocaleString("he")} תוצאות</h2>
+            <h2 className="text-sm text-muted mb-4">
+              נמצאו {capped ? "מעל " : ""}{total.toLocaleString("he")} תוצאות
+            </h2>
             <div className="space-y-3">
               {results.map((v) => (
                 <VerdictCard key={v.id} v={v} />
