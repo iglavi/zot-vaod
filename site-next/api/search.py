@@ -1,6 +1,8 @@
 """נקודת קצה לחיפוש המובנה (Vercel Python function, Flask/WSGI).
 עוטפת את zot.search.simple_search הקיים בלי לשנות את הלוגיקה שלו."""
+import html
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -9,9 +11,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from flask import Flask, jsonify, request  # noqa: E402
 
 from zot import search as zot_search  # noqa: E402
+from zot import storage as zot_storage  # noqa: E402
 from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
+
+_SNIPPET_CONTEXT_CHARS = 160
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _build_snippet(text: str, terms: list[str]) -> str | None:
+    """קטע-תצוגה (HTML) סביב ההתאמה הראשונה של אחת ממילות החיפוש בגוף
+    המסמך, עם <mark> סביב ההתאמה. escape ידני לשאר הטקסט (לא ל-<mark>
+    עצמו) - הטקסט מקורו במסמך פסק-הדין עצמו (לא קלט משתמש גולמי), אבל
+    עדיין עלול להכיל תווי HTML מקריים (למשל ציטוט בתוך הטקסט)."""
+    if not text or not terms:
+        return None
+    lower = text.lower()
+    match_start = None
+    match_len = 0
+    for term in terms:
+        idx = lower.find(term.lower())
+        if idx != -1:
+            match_start = idx
+            match_len = len(term)
+            break
+    if match_start is None:
+        return None
+    start = max(0, match_start - _SNIPPET_CONTEXT_CHARS)
+    end = min(len(text), match_start + match_len + _SNIPPET_CONTEXT_CHARS)
+    before = html.escape(text[start:match_start])
+    matched = html.escape(text[match_start:match_start + match_len])
+    after = html.escape(text[match_start + match_len:end])
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return f"{prefix}{before}<mark>{matched}</mark>{after}{suffix}"
 
 
 @app.route("/api/search", methods=["GET"])
@@ -45,6 +79,18 @@ def do_search():
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+
+    # תקציר עם הדגשה - רק כשיש חיפוש חופשי בטקסט (בלעדיו אין מה להדגיש),
+    # ורק לעשרת התוצאות של העמוד הנוכחי (לא כל ההתאמות). full_text לא חי
+    # ב-DB (עבר ל-R2, ראו zot/search.py) אז זו קריאת-רשת נוספת - fetch_fulltexts
+    # כבר מבצעת אותה במקביל (ThreadPoolExecutor) ומדלגת בשקט על כשלים.
+    free_text = request.args.get("free_text", "")
+    terms = [t for t in _TOKEN_RE.findall(free_text) if len(t) >= 2]
+    if terms and rows:
+        texts = zot_storage.fetch_fulltexts([r["id"] for r in rows])
+        for r in rows:
+            r["snippet"] = _build_snippet(texts.get(r["id"], ""), terms)
+
     # total מוגבל בפועל ל-_BROAD_FILTER_CAP עבור חיפושים רחבים-מדי (ראו
     # ההערה המפורטת ב-zot/search.py: simple_search) - כשמגיעים לתקרה הזו,
     # total אינו הספירה האמיתית אלא רק "לפחות כמה" (ה-UI מציג "מעל X").

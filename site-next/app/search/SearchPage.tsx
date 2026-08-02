@@ -17,6 +17,7 @@ type Verdict = {
   decision_type: string;
   docx_url?: string | null;
   pdf_url?: string | null;
+  snippet?: string | null;
 };
 
 const emptyForm = {
@@ -105,6 +106,26 @@ export default function SearchPage() {
   const perPage = 10;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
+  // ייצוא CSV של עמוד התוצאות הנוכחי (לא כל ההתאמות - מייצוא כלל
+  // ההתאמות היה דורש קריאת-שרת נוספת נפרדת). BOM בתחילת הקובץ - בלעדיו
+  // Excel נוטה לפרש עברית ב-UTF-8 בקידוד שגוי ולהציג ג'יבריש.
+  function exportCsv() {
+    if (!results || results.length === 0) return;
+    const cols = ["מספר הליך", "צדדים", "בית משפט", "תאריך", "שופט/ת", "סוג החלטה"];
+    const rows = results.map((v) => [
+      v.case_number, v.parties, v.court, v.decision_date || v.filed_date || "", v.judge, v.decision_type,
+    ]);
+    const escape = (s: string) => `"${(s ?? "").replace(/"/g, '""')}"`;
+    const csv = [cols, ...rows].map((r) => r.map(escape).join(",")).join("\r\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `giluy-naot-חיפוש-עמוד-${page}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <Header active="/search" />
@@ -192,9 +213,16 @@ export default function SearchPage() {
 
         {results && (
           <div className="mt-10" aria-live="polite">
-            <h2 className="text-sm text-muted mb-4">
-              נמצאו {capped ? "מעל " : ""}{total.toLocaleString("he")} תוצאות
-            </h2>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+              <h2 className="text-sm text-muted">
+                נמצאו {capped ? "מעל " : ""}{total.toLocaleString("he")} תוצאות
+              </h2>
+              {results.length > 0 && (
+                <button onClick={exportCsv} className="btn-outline text-xs px-3 py-1.5">
+                  ייצוא עמוד זה ל-CSV
+                </button>
+              )}
+            </div>
             <div className="space-y-3">
               {results.map((v) => (
                 <VerdictCard key={v.id} v={v} />

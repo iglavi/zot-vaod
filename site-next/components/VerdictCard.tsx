@@ -11,6 +11,8 @@ type Verdict = {
   decision_type?: string;
   docx_url?: string | null;
   pdf_url?: string | null;
+  /** HTML קטן (רק &lt;mark&gt; מותר, escape-ed בשרת) - ראו api/search.py: _build_snippet. */
+  snippet?: string | null;
 };
 
 function DocLinks({ v, size = "normal" }: { v: Verdict; size?: "normal" | "small" }) {
@@ -56,6 +58,12 @@ export function VerdictCard({ v }: { v: Verdict }) {
         {v.judge && <span>·</span>}
         <span>{v.judge}</span>
       </div>
+      {v.snippet && (
+        <p
+          className="text-xs text-ink/70 mt-2 leading-relaxed [&_mark]:bg-green-200 [&_mark]:text-green-900 [&_mark]:rounded-sm [&_mark]:px-0.5"
+          dangerouslySetInnerHTML={{ __html: v.snippet }}
+        />
+      )}
     </div>
   );
 }
