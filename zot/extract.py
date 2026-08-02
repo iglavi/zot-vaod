@@ -535,12 +535,19 @@ _PARTIES_STOP_FALLBACK = re.compile(r"כב(?:ו?ד|['׳])")
 # העמימות: לכל תו יש דרך פירוק אחת בלבד.
 _ROLE_WORD_RE = r"(?:ה?(?:עותר|מבקש|תובע|מערער|משיב|נתבע)(?:ת|ים)?)"
 _CASE_TYPE_TOKENS_ALT = "|".join(re.escape(ct) for ct in sorted(VALID_CASE_TYPES, key=len, reverse=True))
+# תיקי ערעור-שכנגד בעליון כותבים תפקיד כפול על פני שתי שורות, למשל
+# 'המערערת והמשיבה\nבערעור שכנגד: X' (X הוא הצד, "בערעור שכנגד" הוא
+# תיאור-התפקיד בהליך הנגדי, לא חלק מהשם) - בלי החלופות האלה ב-EXT,
+# ההרחבה נעצרת ב"ערעור" (לא מילת-תפקיד/סוג-תיק/תו-בודד מוכר) ולא
+# מגיעה לנקודתיים בכלל, וההתאמה כולה נכשלת.
+_CROSS_PROCEEDING_TOKENS_ALT = r"בערעור|בעתירה|בתביעה|בבקשה|שכנגד"
 # ';' בין תת-תוויות (למשל 'המשיבה בע"פ 2710/16; והמערערת בע"פ 2987/16:')
 # חייב להיכלל: בלעדיו ההרחבה נעצרת שם, וההתאמה כולה נכשלת וממשיכה
 # לחפש מיקום מאוחר-ומוטעה יותר (בפועל: תווית 'בשם הנאשם/ת:' של הבא-כוח,
 # בדיוק הדבר שההרחבה הזו נועדה להימנע ממנו).
 _CONSOLIDATED_LABEL_EXT_RE = (
-    r"(?:\s|[ובה]|/|\d|;|" + _ROLE_WORD_RE + r"|(?:" + _CASE_TYPE_TOKENS_ALT + r"))*"
+    r"(?:\s|[ובה]|/|\d|;|" + _ROLE_WORD_RE + r"|(?:" + _CASE_TYPE_TOKENS_ALT + r")|(?:"
+    + _CROSS_PROCEEDING_TOKENS_ALT + r"))*"
 )
 # כשיש כמה צדדים מאותו סוג (למשל "משיבה 1" ו"משיבה 2" בתיק מאוחד עם
 # צד שלישי), הכתיב הרגיל הוא בלי ה"א-הידיעה בכלל ('משיבה 1:' לא 'המשיבה
@@ -552,13 +559,22 @@ _CONSOLIDATED_LABEL_EXT_RE = (
 _BARE_ROLE_NUM_RE = r"(?:עותר(?:ת|ים)?|מבקש(?:ת|ים)?|תובע(?:ת|ים)?|מערער(?:ת|ים)?)\s*\d+"
 _BARE_DEFENDANT_NUM_RE = r"(?:משיב(?:ה|ים)?|נתבע(?:ת|ים)?)\s*\d+"
 
+# lookbehind: מונע התאמה על מילת-תפקיד שהיא בעצם סיומת של מילה מורכבת
+# ('והמערערת' = 'ו' (החיבור) + 'המערערת') - בלי זה, בתיאורי-תפקיד כפולים
+# ('המשיבה והמערערת' - צד שהוא גם משיב בהליך העיקרי וגם מערער בשכנגד),
+# חלופה 4 (מילת-תפקיד חשופה שנגמרת ב-\n) תופסת בטעות את 'המערערת' באמצע
+# 'והמערערת' כאילו הייתה תווית עצמאית - שם-צד מזוהם עם 'בערעור שכנגד:'
+# (ראו גם _CROSS_PROCEEDING_TOKENS_ALT למעלה, לתיקון המקרה המלא).
+_LABEL_WORD_BOUNDARY = r"(?<![א-ת])"
 _PLAINTIFF_LABEL_RE = re.compile(
+    _LABEL_WORD_BOUNDARY +
     r"(?:(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?)[^:\n]{0,40}:|"
     r"(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?)" + _CONSOLIDATED_LABEL_EXT_RE + r":|"
     + _BARE_ROLE_NUM_RE + _CONSOLIDATED_LABEL_EXT_RE + r":|"
-    r"(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?|מאשימה|התביעה)\s*\n)"
+    r"(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?|ה?מאשימה|התביעה)\s*\n)"
 )
 _DEFENDANT_LABEL_RE = re.compile(
+    _LABEL_WORD_BOUNDARY +
     r"(?:(?:המשיב(?:ה|ים)?|הנתבע(?:ת|ים)?)[^:\n]{0,40}:|"
     r"(?:המשיב(?:ה|ים)?|הנתבע(?:ת|ים)?)" + _CONSOLIDATED_LABEL_EXT_RE + r":|"
     + _BARE_DEFENDANT_NUM_RE + _CONSOLIDATED_LABEL_EXT_RE + r":|"
@@ -655,22 +671,93 @@ def _first_party_name(segment: str) -> tuple[str, bool]:
     return name, has_more
 
 
+# תוויות-צד בלי ':' כלל, עם שם הצד צמוד ישירות על אותה שורה ('התובע אחמד
+# גדיר', לא 'התובע: אחמד גדיר') - כתיב שנצפה בבתי דין לעבודה. חלון קצר
+# בתחילת המסמך בלבד (לא כל 2500 התווים של _extract_parties_after_judges)
+# כדי לא לתפוס בטעות תחילת-משפט בגוף ההחלטה (הרבה משפטים מתחילים 'התובע
+# טען...'/'התובע צירף...', ועלולים להיגמר בשורה קצרה בגלל מספור-שורות
+# של pdfplumber) - קרבה לתחילת המסמך היא הסימן המבחין העיקרי שזו תווית
+# אמיתית ולא פרוזה. אותו lookbehind כמו _PLAINTIFF_LABEL_RE/_DEFENDANT_
+# LABEL_RE, מאותה סיבה (מילת-תפקיד בתוך מילה מורכבת כמו 'והתובע').
+#
+# תו ראשון חייב להיות אות עברית (לא סוגר/ספרה) - בלי זה נמצאו בפועל שתי
+# התאמות-שווא: 'המבקש (המערער)' (הבהרת-תפקיד בסוגריים, לא שם) ו-'המשיבים
+# 1-4 ע"י ב"כ...' (המשך-ייצוג לצדדים שכבר מנויים למעלה, לא שם חדש) -
+# שתיהן קצרות ומסתיימות ב-\n בדיוק כמו תווית-שם אמיתית.
+#
+# עוד סיכון-שווא שנמצא בפועל: משפטי-פרוזה בגוף ההחלטה שמתחילים 'התובע
+# הוא מתווך מקרקעין.'/'התובע ביום 29.09.16...' - מבנית זהים לתווית
+# אמיתית (מילת-תפקיד+רווח+טקסט קצר+\n) בגלל מספור-שורות/שבירת-שורות של
+# pdfplumber. הבחנה אמינה: תוויות-צד אמיתיות תמיד מופיעות *לפני* כותרת
+# סוג-המסמך ('פסק דין'/'החלטה'/'גזר דין') שפותחת את גוף הפרוזה - אחריה
+# אין עוד תוויות, רק נרטיב. חותכים את חלון-החיפוש בכותרת הזו (אם נמצאה)
+# במקום חלון קבוע: בטוח יותר מהגבלת-אורך גרידא, כי גם מסמכים קצרים בהם
+# הפרוזה מתחילה מוקדם (כמו 1538294) לא נתפסים.
+_DOC_HEADING_RE = re.compile(r"פסק[\s-]דין|החלטה|גזר[\s-]דין")
+_BARE_NAME_HEAD_WINDOW = 1000
+# עוד סיכון-שווא: בית הדין הארצי לעבודה כותב שם *לפני* תיאור-התפקיד
+# ('1.כמאל עתאמנה\n2.הנדסת חשמל...\nהמערערים והמשיבים שכנגד\n') - "הצד
+# השני" בתיאור-התפקיד הכפול ('X והY שכנגד') נתפס בטעות כאילו היה השם
+# (אותה תבנית מדויקת שהובילה ל-_LABEL_WORD_BOUNDARY למעלה, הפעם בתוך
+# תוכן הלוקאהד ולא בתווית עצמה) - שולל תוכן שמתחיל ב-'ו'-חיבור+מילת-
+# תפקיד, לא רק שמדגישים תו ראשון עברי גרידא.
+_BARE_NAME_NOT_ROLE_RE = r"(?!ו?ה?(?:עותר|מבקש|תובע|מערער|משיב|נתבע))"
+_BARE_PLAINTIFF_LABEL_RE = re.compile(
+    _LABEL_WORD_BOUNDARY +
+    r"(?:העותר(?:ת|ים)?|המבקש(?:ת|ים)?|התובע(?:ת|ים)?|המערער(?:ת|ים)?) "
+    r"(?=" + _BARE_NAME_NOT_ROLE_RE + r"[א-ת][^:\n]{0,39}\n)"
+)
+_BARE_DEFENDANT_LABEL_RE = re.compile(
+    _LABEL_WORD_BOUNDARY +
+    r"(?:המשיב(?:ה|ים)?|הנתבע(?:ת|ים)?) "
+    r"(?=" + _BARE_NAME_NOT_ROLE_RE + r"[א-ת][^:\n]{0,39}\n)"
+)
+
+
+def _extract_parties_bare_labels(text: str) -> str:
+    """גיבוי-גיבוי ל-_extract_parties_after_judges: תווית-צד חשופה בלי
+    ':' (ראו _BARE_PLAINTIFF_LABEL_RE/_BARE_DEFENDANT_LABEL_RE למעלה).
+    מופעל רק כש-_extract_parties_after_judges הרגיל לא מצא כלום."""
+    window = text[:_BARE_NAME_HEAD_WINDOW]
+    heading = _DOC_HEADING_RE.search(window)
+    if heading:
+        window = window[:heading.start()]
+    p_label = _BARE_PLAINTIFF_LABEL_RE.search(window)
+    if not p_label:
+        return ""
+    d_label = _BARE_DEFENDANT_LABEL_RE.search(window, p_label.end())
+    if not d_label:
+        return ""
+    p_name, p_more = _first_party_name(window[p_label.end():d_label.start()])
+    d_name, d_more = _first_party_name(window[d_label.end():])
+    if not (2 <= len(p_name) <= 80) or not (2 <= len(d_name) <= 80):
+        return ""
+    p_disp = p_name + (" ואח'" if p_more else "")
+    d_disp = d_name + (" ואח'" if d_more else "")
+    return f"{p_disp} נ' {d_disp}"
+
+
 def _extract_parties_after_judges(text: str) -> str:
     """גיבוי: מחפש תוויות צד מפורשות בתחילת המסמך (אחרי אזור השופט/ים),
     ובונה מהן 'שם ראשון נ' שם ראשון' (עם 'ואח'' אם יש עוד באותו צד)."""
     window = text[:2500]
     p_label = _PLAINTIFF_LABEL_RE.search(window)
     if not p_label:
-        return ""
+        return _extract_parties_bare_labels(text)
     vs = _VS_RE.search(window, p_label.end(), min(len(window), p_label.end() + _VS_MAX_DISTANCE))
     d_label = _DEFENDANT_LABEL_RE.search(window, vs.end() if vs else p_label.end())
     if not d_label:
-        return ""
+        return _extract_parties_bare_labels(text)
     p_content = _skip_stacked_labels(window[p_label.end():(vs.start() if vs else d_label.start())], _PLAINTIFF_LABEL_RE)
     d_content = _skip_stacked_labels(window[d_label.end():], _DEFENDANT_LABEL_RE)
     p_name, p_more = _first_party_name(p_content)
     d_name, d_more = _first_party_name(d_content)
     if not (2 <= len(p_name) <= 80) or not (2 <= len(d_name) <= 80):
+        # תוויות נמצאו אבל התוכן ביניהן ריק/פגום (למשל תיק מאוחד עם כמה
+        # תוויות-מקום-שמור ריקות ברצף) - לא ננסה bare_labels כאן: זה סימן
+        # למסמך פגום/לא-סטנדרטי, לא לכתיב-בלי-':' - וניסיון bare_labels
+        # על אותו טקסט פגום נמצא בפועל תופס זבל (למשל טקסט מייצוג-משפטי
+        # שבטעות נראה כמו "שם חשוף").
         return ""
     p_disp = p_name + (" ואח'" if p_more else "")
     d_disp = d_name + (" ואח'" if d_more else "")

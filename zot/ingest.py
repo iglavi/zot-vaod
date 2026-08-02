@@ -65,6 +65,7 @@ def _read_text_with_timeout(path: Path) -> str:
 # עדיפות סיומות כשקיימים כמה קבצים לאותו פסק דין (docx נותן טקסט נקי יותר מ-PDF)
 _EXT_PRIORITY = {".docx": 0, ".doc": 1, ".txt": 2, ".pdf": 3}
 _DATE_DIR_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
+_META_DATE_TIMESTAMP_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})(?: \d{2}:\d{2}:\d{2})?$")
 
 # מבצעים commit תקופתי (לא רק בסוף כל הריצה) — כדי שאם התהליך נעצר/נהרג
 # באמצע ריצה ארוכה, העבודה שכבר בוצעה לא תלך לאיבוד: ההרצה הבאה תמשיך
@@ -242,6 +243,25 @@ def _dir_date(path: Path) -> str:
         except Exception:
             return ""
     return ""
+
+
+def _normalize_meta_date(s: str) -> str:
+    """מנרמל את עמודת meta_date מה-CSV ל-YYYY-MM-DD. חלק מהמקורות (בעיקר
+    נט המשפט) מספקים חותמת-זמן מלאה בפורמט DD/MM/YYYY HH:MM:SS במקום
+    תאריך בלבד - השוואות/מיון לפי filed_date (למשל ב-search.py, כש-
+    decision_date ריק) הן lexicographic על מחרוזת, אז פורמט לא-ISO כזה
+    שובר סדר כרונולוגי לגמרי. כבר בפורמט ISO -> מוחזר כפי שהוא."""
+    s = (s or "").strip()
+    if not s:
+        return ""
+    m = _META_DATE_TIMESTAMP_RE.match(s)
+    if not m:
+        return s
+    d, mo, y = m.groups()
+    try:
+        return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+    except Exception:
+        return s
 
 
 def _schema_matches(conn: sqlite3.Connection) -> bool:
@@ -431,7 +451,7 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
                     judge = extract_judge(full_text)
                     decision_date = extract_decision_date(full_text)
 
-            filed = cell(row, "meta_date") or filed_date_from_case(case_number)
+            filed = _normalize_meta_date(cell(row, "meta_date")) or filed_date_from_case(case_number)
             relpath_pdf, relpath_docx = _relpaths(stem)
 
             rowid = _insert_verdict(conn, {
