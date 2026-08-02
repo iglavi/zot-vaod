@@ -17,7 +17,12 @@ app = Flask(__name__)
 @app.route("/api/search", methods=["GET"])
 def do_search():
     try:
-        page = max(1, int(request.args.get("page", "1")))
+        # תקרה עליונה שפויה (לא רק page<1): total עצמו כבר מוגבל ל-
+        # _BROAD_FILTER_CAP (5,000 / 10-לעמוד = עמוד 500 לכל היותר), אז
+        # page גדול בהרבה ממילא לא יחזיר תוצאות - אבל page ענק-קיצוני
+        # (page=10**30 למשל) עלול לחרוג מתחום ה-INTEGER 64-בית של SQLite
+        # ב-OFFSET ולהיכשל בשגיאת DB במקום סתם להחזיר רשימה ריקה.
+        page = min(1_000_000, max(1, int(request.args.get("page", "1"))))
     except ValueError:
         page = 1
     limit = 10

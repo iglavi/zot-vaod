@@ -147,6 +147,19 @@ MATCH_MODES = ("any", "exact", "near")
 
 SORT_OPTIONS = ("relevance", "newest", "oldest", "longest")
 
+_CASE_NUMBER_PREFIX_RE = re.compile(r"^[^\d]+")
+
+
+def _normalize_case_number(text: str) -> str:
+    """מסיר קידומת סוג-הליך (למשל 'ת"א ', 'בג"ץ ') שמשתמשים לפעמים
+    מדביקים יחד עם מספר התיק (כשמעתיקים ציטוט מלא ממקור אחר) - קידומת
+    כזו לא קיימת בעמודת case_number עצמה ב-DB (שם רק המספר), ולכן גורמת
+    ל-0 תוצאות אם לא מוסרים אותה. FTS5 tokenization כבר מטפלת בעצמה
+    בהבדלי מפריד (מקף/מקף-עברי/קו נטוי/רווח) - כל תו שאינו \\w מתפרק
+    לאותם טוקנים, אז אין צורך לנרמל את זה בנפרד."""
+    stripped = _CASE_NUMBER_PREFIX_RE.sub("", text.strip())
+    return stripped or text
+
 
 def _fts_phrase_for_column(text: str, column: str) -> str:
     """בונה שאילתת FTS5 מוגבלת-עמודה (phrase match) עבור שדה בודד (שם צד/
@@ -386,7 +399,7 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         where.append(f"verdicts.court IN ({placeholders})")
         params.extend(matching)
     if case_number:
-        fts_cn = _fts_phrase_for_column(case_number, "case_number")
+        fts_cn = _fts_phrase_for_column(_normalize_case_number(case_number), "case_number")
         if fts_cn:
             where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
             params.append(fts_cn)
