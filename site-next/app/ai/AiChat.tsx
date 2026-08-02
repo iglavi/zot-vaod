@@ -21,6 +21,7 @@ type Conversation = { id: string; title: string; turns: Turn[]; updatedAt: numbe
 
 const HISTORY_KEY = "giluy-naot-ai-history";
 const MAX_SAVED_CONVERSATIONS = 20;
+const CITIZEN_MODE_KEY = "giluy-naot-citizen-mode";
 
 // localStorage בלבד (לא שרת) - אין מערכת חשבונות/התחברות באתר הזה, אז
 // זו הדרך היחידה כרגע לשמר היסטוריית שיחות בין טעינות-דף בלי לבנות
@@ -109,9 +110,25 @@ export function AiChat() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [history, setHistoryList] = useState<Conversation[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  // F-13: "הסבר לי כאזרח" - נשמר ב-localStorage כדי שהבחירה תישאר בין
+  // ביקורים (כמו היסטוריית השיחות) - לא קשור לשיחה ספציפית אלא להעדפת
+  // המשתמש/ת הכללית.
+  const [citizenMode, setCitizenMode] = useState(false);
   const startedRef = useRef(false);
   const stepRef = useRef<HTMLDivElement>(null);
   const conversationIdRef = useRef<string>("");
+
+  function toggleCitizenMode() {
+    setCitizenMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(CITIZEN_MODE_KEY, next ? "1" : "0");
+      } catch {
+        // פרטי/quota - לא קריטי, פשוט לא יישמר לפעם הבאה
+      }
+      return next;
+    });
+  }
 
   async function copyAnswer(text: string, index: number) {
     try {
@@ -128,6 +145,11 @@ export function AiChat() {
   }
 
   useEffect(() => {
+    try {
+      setCitizenMode(localStorage.getItem(CITIZEN_MODE_KEY) === "1");
+    } catch {
+      // פרטי/quota - משאירים ברירת מחדל (כבוי)
+    }
     setHistoryList(loadConversations());
     const q = params.get("q");
     if (q && !startedRef.current) {
@@ -191,7 +213,7 @@ export function AiChat() {
       res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({ question, history, citizen_mode: citizenMode }),
       });
     } catch {
       setTurns((t) => [...t, { role: "assistant", text: "שגיאת תקשורת - נסו שוב." }]);
@@ -395,9 +417,25 @@ export function AiChat() {
             )}
           </div>
 
+          <div className="flex items-center justify-end mt-6">
+            <label className="flex items-center gap-2 text-xs text-ink/70 cursor-pointer select-none min-h-[44px]">
+              <span>הסבר לי כאזרח (ניסוח פשוט, בלי ז&apos;רגון משפטי)</span>
+              <span
+                role="switch"
+                aria-checked={citizenMode}
+                onClick={toggleCitizenMode}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCitizenMode(); } }}
+                tabIndex={0}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-green-500/40 ${citizenMode ? "bg-green-700" : "bg-border"}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${citizenMode ? "-translate-x-1" : "-translate-x-6"}`} />
+              </span>
+            </label>
+          </div>
+
           <form
             onSubmit={(e) => { e.preventDefault(); send(input); }}
-            className="card flex items-center gap-3 p-2 pr-3 mt-8 sticky bottom-6"
+            className="card flex items-center gap-3 p-2 pr-3 mt-3 sticky bottom-6"
           >
             <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
               {step !== null ? "מעבד…" : "שאלו"}

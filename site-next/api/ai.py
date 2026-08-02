@@ -1,6 +1,10 @@
 """נקודת קצה לחיפוש החכם (AI), עם הזרמת שלבי-חשיבה + תשובה בזמן אמת
 (Server-Sent Events) - עוטפת את zot.ai_search הקיים בלי לשנות אותו.
 
+גוף הבקשה (POST JSON): {"question": str, "history": [...], "citizen_mode":
+bool} - citizen_mode (F-13) מבקש ניסוח פשוט ופרקטי במקום ניסוח משפטי
+(ראו zot/ai_search.py: _SYSTEM_ANSWER_CITIZEN).
+
 אירועים שנשלחים ללקוח (כל אחד שורת 'data: {...json...}\n\n'):
   step       -> {"step": "received"|"analyzing"|"retrieving"|"answering"}
   sources    -> {"verdicts": [...]}   (נשלח לפני תחילת התשובה, כמו בעיצוב)
@@ -35,6 +39,16 @@ app = Flask(__name__)
 _MAX_DURATION_S = 60
 _SUGGESTIONS_MIN_HEADROOM_S = 10
 
+# בדיקה נוספת, חמורה יותר: גם *בלי* שאלות ההמשך, תשובה ארוכה מספיק
+# (נצפה בפועל: מעל 60 שניות סטרימינג לבדו) עלולה לחרוג מהתקרה בעצמה ולהיהרג
+# באמצע - בלי אירוע done, בלי הודעת שגיאה, סתם חיבור שנקטע (בדיוק התקלה
+# המקורית "נתקע באמצע משפט" שתוקנה בתחילת העבודה על האתר, שמתבררת כחוזרת
+# עבור השאלות הרחבות/מורכבות ביותר). פס-ביטחון פרו-אקטיבי: עוצרים ביוזמתנו
+# לפני התקרה, עם הודעת-חיתוך ברורה ואירוע done תקין, במקום לתת ל-Vercel
+# להרוג את הפונקציה בלי שהלקוח יקבל סיום מסודר.
+_ANSWER_DEADLINE_S = _MAX_DURATION_S - 8
+_TRUNCATION_NOTE = "\n\n_(התשובה נקטעה בשל אורך - נסו לשאול שאלה ממוקדת יותר לתשובה מלאה.)_"
+
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -45,6 +59,7 @@ def ai_endpoint():
     body = request.get_json(force=True, silent=True) or {}
     question = (body.get("question") or "").strip()
     history = body.get("history") or []
+    citizen_mode = bool(body.get("citizen_mode"))
 
     def stream():
         start = time.monotonic()
@@ -86,17 +101,28 @@ def ai_endpoint():
         yield _sse("sources", {"verdicts": add_download_urls(verdicts)})
         yield _sse("step", {"step": "answering"})
         answer_text = ""
+        truncated = False
         try:
             for chunk in ai_search.answer_stream(
                 client, question, verdicts, total_count=total_count,
                 court_scope=analysis.get("court_scope", ""),
                 court_type=analysis.get("court_type", ""),
                 history=history,
+                citizen_mode=citizen_mode,
             ):
                 answer_text += chunk
                 yield _sse("delta", {"text": chunk})
+                if time.monotonic() - start > _ANSWER_DEADLINE_S:
+                    truncated = True
+                    break
         except Exception as e:  # noqa: BLE001
             yield _sse("error", {"message": f"שגיאה בקבלת תשובה מהמודל: {e}"})
+            return
+
+        if truncated:
+            answer_text += _TRUNCATION_NOTE
+            yield _sse("delta", {"text": _TRUNCATION_NOTE})
+            yield _sse("done", {})
             return
 
         # שאלות המשך מוצעות - קריאה נוספת קצנה ונפרדת, אחרי שהתשובה עצמה
