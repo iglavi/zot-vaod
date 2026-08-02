@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from flask import Flask, jsonify, request  # noqa: E402
 
 from zot import search as zot_search  # noqa: E402
-from zot import storage as zot_storage  # noqa: E402
 from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
@@ -81,15 +80,24 @@ def do_search():
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
 
     # תקציר עם הדגשה - רק כשיש חיפוש חופשי בטקסט (בלעדיו אין מה להדגיש),
-    # ורק לעשרת התוצאות של העמוד הנוכחי (לא כל ההתאמות). full_text לא חי
-    # ב-DB (עבר ל-R2, ראו zot/search.py) אז זו קריאת-רשת נוספת - fetch_fulltexts
-    # כבר מבצעת אותה במקביל (ThreadPoolExecutor) ומדלגת בשקט על כשלים.
+    # ורק לעשרת התוצאות של העמוד הנוכחי (לא כל ההתאמות). full_text כן חי
+    # בטבלת verdicts עצמה (verdicts_fts הוא contentless, אבל v.* ב-JOIN
+    # מביא אותו מהטבלה הרגילה - ראו retrieve_for_ai) - שאילתה נוספת קטנה
+    # ב-DB, לא קריאת R2.
     free_text = request.args.get("free_text", "")
     terms = [t for t in _TOKEN_RE.findall(free_text) if len(t) >= 2]
     if terms and rows:
-        texts = zot_storage.fetch_fulltexts([r["id"] for r in rows])
+        try:
+            ids = [r["id"] for r in rows]
+            placeholders = ",".join("?" * len(ids))
+            conn = zot_search.get_conn()
+            cur = conn.execute(f"SELECT id, full_text FROM verdicts WHERE id IN ({placeholders})", ids)
+            texts = {r["id"]: r["full_text"] for r in zot_search._rows(cur, cur.fetchall())}
+        except Exception as e:  # noqa: BLE001
+            print(f"snippet fetch failed: {type(e).__name__}: {e}")
+            texts = {}
         for r in rows:
-            r["snippet"] = _build_snippet(texts.get(r["id"], ""), terms)
+            r["snippet"] = _build_snippet(texts.get(r["id"]) or "", terms)
 
     # total מוגבל בפועל ל-_BROAD_FILTER_CAP עבור חיפושים רחבים-מדי (ראו
     # ההערה המפורטת ב-zot/search.py: simple_search) - כשמגיעים לתקרה הזו,
