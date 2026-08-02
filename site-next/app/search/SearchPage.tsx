@@ -1,9 +1,9 @@
 "use client";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { VerdictCard, CaseGroupCard } from "@/components/VerdictCard";
+import { VerdictCard } from "@/components/VerdictCard";
 import { ThinkingSteps } from "@/components/ThinkingSteps";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type Verdict = {
@@ -19,24 +19,6 @@ type Verdict = {
   pdf_url?: string | null;
   snippet?: string | null;
 };
-
-/** מקבצת את תוצאות העמוד הנוכחי לפי (בית משפט, מספר תיק) - מספר תיק לבדו
- * אינו ייחודי-גלובלית (אותו מספר תיק חוזר על עצמו בבתי משפט שונים), אז
- * המפתח חייב לכלול גם court. קיבוץ רק בתוך העמוד (לא שאילתת-DB נפרדת) -
- * ראו CaseGroupCard ב-VerdictCard.tsx. */
-function groupByCase(results: Verdict[]): Verdict[][] {
-  const order: string[] = [];
-  const groups = new Map<string, Verdict[]>();
-  for (const v of results) {
-    const key = `${v.court} ${v.case_number}`;
-    if (!groups.has(key)) {
-      groups.set(key, []);
-      order.push(key);
-    }
-    groups.get(key)!.push(v);
-  }
-  return order.map((key) => groups.get(key)!);
-}
 
 const emptyForm = {
   name: "", judge: "", case_number: "",
@@ -113,8 +95,6 @@ export default function SearchPage() {
       setStep(null);
     }
   }
-
-  const groupedResults = useMemo(() => groupByCase(results ?? []), [results]);
 
   const perPage = 10;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
@@ -197,15 +177,15 @@ export default function SearchPage() {
               </h2>
             </div>
             <div className="space-y-3">
-              {groupedResults.map((group, i) => {
+              {results.map((v, i) => {
                 const num = (page - 1) * perPage + i + 1;
                 return (
-                  <div key={`${group[0].court} ${group[0].case_number}`} className="flex items-start gap-3">
+                  <div key={v.id} className="flex items-start gap-3">
                     <span className="text-xs text-muted w-7 shrink-0 text-left pt-5 tabular-nums" dir="ltr">
                       {num}.
                     </span>
                     <div className="flex-1 min-w-0">
-                      {group.length > 1 ? <CaseGroupCard items={group} /> : <VerdictCard v={group[0]} />}
+                      <VerdictCard v={v} />
                     </div>
                   </div>
                 );

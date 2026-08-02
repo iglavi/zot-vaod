@@ -5,7 +5,7 @@ const NAV = [
   { href: "/", label: "בית" },
   { href: "/ai", label: "חיפוש AI" },
   { href: "/search", label: "חיפוש מובנה" },
-  { href: "/about", label: "אודות היוזמה" },
+  { href: "/about", label: "אודות" },
 ];
 
 export function Header({ active = "/" }: { active?: string }) {

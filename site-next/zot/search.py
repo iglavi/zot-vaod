@@ -843,6 +843,10 @@ def _court_tier(row: dict) -> int:
     return 3
 
 
+def _row_date_key(row: dict) -> str:
+    return row.get("decision_date") or row.get("filed_date") or ""
+
+
 def _diversify_supreme(rows: list, limit: int) -> list:
     """מוודא ייצוג של פסיקת בית המשפט העליון במדגם המוצג ל-AI, גם כשדירוג
     BM25 הגולמי מעדיף פסקי דין שגרתיים מערכאות נמוכות (שלעיתים חוזרים על
@@ -855,8 +859,13 @@ def _diversify_supreme(rows: list, limit: int) -> list:
     בנוסף (F-2): מדרג את סדר-ההצגה הסופי לפי היררכיית ערכאות (עליון >
     מחוזי > שלום > השאר), לא רק מבטיח ייצוג - בלעדי זה נמצא בפועל שפסיקה
     מנחה של העליון הוצגה *אחרונה* מתוך 20 מקורות (BM25 גולמי לא מבחין בין
-    חשיבות-משפטית לצפיפות-מילולית). בתוך כל דרג, נשמר סדר-BM25 היחסי
-    המקורי (מיון-משני לפי אינדקס)."""
+    חשיבות-משפטית לצפיפות-מילולית).
+
+    בתוך כל דרג, ממוין לפי עדכניות (חדש קודם), לא לפי סדר-BM25 המקורי -
+    בבקשת המשתמש (3/8/2026): גם בין כמה פסקי דין של אותה ערכאה (כולל
+    בתוך העליון עצמו), עדיפות לחדש יותר. מיון יציב דו-שלבי (קודם תאריך
+    יורד, ואז דרג עולה) - Python שומר סדר יחסי בתוך קבוצות שוות-מפתח
+    במיון יציב, כך שאין צורך "להפוך" את מחרוזת-התאריך."""
     supreme_idx = [i for i, r in enumerate(rows) if _is_supreme_row(r)]
     n_supreme = min(len(supreme_idx), max(1, limit // 2)) if supreme_idx else 0
     keep = set(supreme_idx[:n_supreme])
@@ -864,7 +873,8 @@ def _diversify_supreme(rows: list, limit: int) -> list:
         if len(keep) >= limit:
             break
         keep.add(i)
-    ordered = sorted(keep, key=lambda i: (_court_tier(rows[i]), i))
+    ordered = sorted(keep, key=lambda i: _row_date_key(rows[i]), reverse=True)
+    ordered = sorted(ordered, key=lambda i: _court_tier(rows[i]))
     return [rows[i] for i in ordered]
 
 
