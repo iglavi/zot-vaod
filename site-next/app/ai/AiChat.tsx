@@ -15,6 +15,7 @@ type Turn = {
   role: "user" | "assistant";
   text: string;
   sources?: Source[];
+  suggestions?: string[];
 };
 type Conversation = { id: string; title: string; turns: Turn[]; updatedAt: number };
 
@@ -84,9 +85,21 @@ export function AiChat() {
   const [step, setStep] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [history, setHistoryList] = useState<Conversation[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const startedRef = useRef(false);
   const stepRef = useRef<HTMLDivElement>(null);
   const conversationIdRef = useRef<string>("");
+
+  async function copyAnswer(text: string, index: number) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 2000);
+    } catch {
+      // דפדפן חוסם/HTTP לא מאובטח - אין navigator.clipboard בכלל; לא קריטי
+      // מספיק שהמשתמש יבחר-ידנית, לא שווה הצגת שגיאה על זה
+    }
+  }
 
   useEffect(() => {
     setHistoryList(loadConversations());
@@ -209,6 +222,13 @@ export function AiChat() {
             return copy;
           });
         }
+        if (event === "suggestions" && Array.isArray(data.questions) && data.questions.length > 0) {
+          setTurns((t) => {
+            const copy = [...t];
+            copy[copy.length - 1] = { ...copy[copy.length - 1], suggestions: data.questions };
+            return copy;
+          });
+        }
         if (event === "done" || event === "error") {
           sawTerminalEvent = true;
           setStep(null);
@@ -317,6 +337,28 @@ export function AiChat() {
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">
                     {t.role === "assistant" ? renderAnswerWithCitationLinks(t.text, t.sources, i) : t.text}
                   </p>
+                  {t.role === "assistant" && t.text && !(step && i === turns.length - 1) && (
+                    <button
+                      onClick={() => copyAnswer(t.text, i)}
+                      className="mt-2 text-xs text-ink/50 hover:text-green-800 flex items-center gap-1"
+                    >
+                      {copiedIndex === i ? "✓ הועתק" : "📋 העתקת התשובה"}
+                    </button>
+                  )}
+                  {t.role === "assistant" && t.suggestions && t.suggestions.length > 0 &&
+                    i === turns.length - 1 && !step && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {t.suggestions.map((q, qi) => (
+                        <button
+                          key={qi}
+                          onClick={() => send(q)}
+                          className="text-xs border border-border rounded-full px-3 py-1.5 min-h-[44px] text-green-800 hover:border-green-700 hover:bg-green-100"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

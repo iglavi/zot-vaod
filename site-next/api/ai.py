@@ -2,11 +2,12 @@
 (Server-Sent Events) - עוטפת את zot.ai_search הקיים בלי לשנות אותו.
 
 אירועים שנשלחים ללקוח (כל אחד שורת 'data: {...json...}\n\n'):
-  step   -> {"step": "received"|"analyzing"|"retrieving"|"answering"}
-  sources-> {"verdicts": [...]}   (נשלח לפני תחילת התשובה, כמו בעיצוב)
-  delta  -> {"text": "..."}       (חלק מהתשובה, מוזרם token-by-token)
-  done   -> {}
-  error  -> {"message": "..."}
+  step       -> {"step": "received"|"analyzing"|"retrieving"|"answering"}
+  sources    -> {"verdicts": [...]}   (נשלח לפני תחילת התשובה, כמו בעיצוב)
+  delta      -> {"text": "..."}       (חלק מהתשובה, מוזרם token-by-token)
+  suggestions-> {"questions": [...]}  (עד 3 שאלות המשך מוצעות, אחרי סיום התשובה)
+  done       -> {}
+  error      -> {"message": "..."}
 """
 import json
 import os
@@ -72,6 +73,7 @@ def ai_endpoint():
 
         yield _sse("sources", {"verdicts": add_download_urls(verdicts)})
         yield _sse("step", {"step": "answering"})
+        answer_text = ""
         try:
             for chunk in ai_search.answer_stream(
                 client, question, verdicts, total_count=total_count,
@@ -79,10 +81,17 @@ def ai_endpoint():
                 court_type=analysis.get("court_type", ""),
                 history=history,
             ):
+                answer_text += chunk
                 yield _sse("delta", {"text": chunk})
         except Exception as e:  # noqa: BLE001
             yield _sse("error", {"message": f"שגיאה בקבלת תשובה מהמודל: {e}"})
             return
+
+        # שאלות המשך מוצעות - קריאה נוספת קצנה ונפרדת, אחרי שהתשובה עצמה
+        # כבר הושלמה; כשל כאן לא אמור לפגוע בתשובה שכבר התקבלה בהצלחה.
+        questions = ai_search.suggest_followups(client, question, answer_text)
+        if questions:
+            yield _sse("suggestions", {"questions": questions})
         yield _sse("done", {})
 
     return Response(

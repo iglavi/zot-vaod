@@ -467,3 +467,29 @@ def answer_stream(client, question: str, verdicts, total_count: int = 0,
     ) as stream:
         for chunk in stream.text_stream:
             yield chunk
+
+
+_SYSTEM_SUGGEST = (
+    "בהינתן שאלה משפטית ותשובה שניתנה לה, הצע 3 שאלות המשך קצרות "
+    "ורלוונטיות שמשתמש עשוי לרצות לשאול הלאה - כאלה שמעמיקות בנושא או "
+    "בוחנות זווית קרובה שלא כוסתה. כל שאלה בשורה נפרדת, בלי מספור/תבליטים/"
+    "ניסוח מקדים, רק השאלות עצמן."
+)
+
+
+def suggest_followups(client, question: str, answer: str) -> list[str]:
+    """3 שאלות המשך מוצעות אחרי תשובה - קריאה נפרדת קצרה וזולה (max_tokens
+    נמוך, לא streaming) אחרי שהתשובה העיקרית כבר הסתיימה. כשל כאן לא אמור
+    להפיל את הצ'אט - מחזיר רשימה ריקה בשקט."""
+    try:
+        resp = client.messages.create(
+            model=config.AI_MODEL,
+            max_tokens=200,
+            system=_SYSTEM_SUGGEST,
+            messages=[{"role": "user", "content": f"שאלה: {question}\n\nתשובה: {answer}"}],
+        )
+        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+        return [line.strip("-• ").strip() for line in text.splitlines() if line.strip()][:3]
+    except Exception as e:  # noqa: BLE001
+        print(f"suggest_followups: נכשל: {type(e).__name__}: {e}")
+        return []
