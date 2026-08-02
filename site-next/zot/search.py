@@ -200,7 +200,13 @@ _RELEVANCE_TYPE_CASE = (
 )
 
 _SORT_SQL = {
-    "relevance": f"{_RELEVANCE_TYPE_CASE}, verdicts.text_length DESC, verdicts.id DESC",
+    # תאריך נוסף בין סוג-ההחלטה לאורך-הטקסט (בקשת המשתמש, 3/8/2026):
+    # לפסק דין יש משמעות-רלוונטיות תלוית-עדכניות (הלכה חדשה עשויה לבטל/
+    # לצמצם קודמת) - לא רק סוג/אורך. בטוח מבחינת ביצועים כי בכל חיפוש
+    # עם סינון כלשהו (החיפוש היחיד שבאמת נגיש מה-UI) המיון הזה כבר רץ
+    # בתוך ה-CTE המוגבל-ל-5,000 (ראו simple_search) - לא על הטבלה המלאה.
+    # הגנה על המקרה החריג (בלי שום סינון בכלל) ניתנת ב-simple_search עצמו.
+    "relevance": f"{_RELEVANCE_TYPE_CASE}, COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) DESC, verdicts.text_length DESC, verdicts.id DESC",
     "newest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) DESC, verdicts.id DESC",
     "oldest": "COALESCE(NULLIF(verdicts.decision_date,''), verdicts.filed_date) ASC, verdicts.id ASC",
     "longest": "verdicts.text_length DESC, verdicts.id DESC",
@@ -496,7 +502,14 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     if fts:
         count_where.append("verdicts.id IN (SELECT rowid FROM verdicts_fts WHERE verdicts_fts MATCH ?)")
         count_params.append(fts)
-    if count_where:
+    # מיון 'רלוונטיות' (בלי bm25) כולל עכשיו תאריך (ראו _SORT_SQL) - זול
+    # לגמרי כשיש סינון (הוא כבר עובר דרך ה-CTE המוגבל-ל-5,000 למטה), אבל
+    # חיפוש-בלי-שום-סינון עם 'relevance' היה מפעיל מיון-מלא על כל הטבלה
+    # בלי הגנה - אז מכריחים גם אותו דרך אותו מנגנון-הגנה (needs_cap),
+    # במקום לדרוש אינדקס חדש על טבלה בת 3.7M+ שורות. לא נגיש כרגע מה-UI
+    # (אין בורר-מיון בחיפוש המובנה) אבל כן אפשרי דרך API/קישור-שיתוף ישן.
+    needs_cap = bool(count_where) or (sort == "relevance" and not use_bm25)
+    if needs_cap:
         # LIMIT בתוך ה-CTE עצמו (לפני ה-JOIN/COUNT) - נבדק בפועל: סינון
         # רחב-מדי (למשל court_type='שלום' + טווח תאריכים, יחד ~548K
         # התאמות מתוך 1.5M השורות) לא נפתר ע"י MATERIALIZED לבד - חייבים
@@ -506,7 +519,8 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         # שניות) על חשבון דיוק מוחלט בקצה הרחוק - "5,000" מוצג במקום
         # הספירה האמיתית (יכולה להיות מאות-אלפים) לחיפושים כאלה בלבד;
         # חיפושים סלקטיביים רגילים (התאמות בפועל מתחת לתקרה) לא מושפעים כלל.
-        count_clause = " AND ".join(count_where)
+        # count_where ריקה (בלי שום סינון) -> "1=1" כדי ש-WHERE יישאר תקין.
+        count_clause = " AND ".join(count_where) if count_where else "1=1"
         total = conn.execute(
             f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {count_clause} LIMIT {_BROAD_FILTER_CAP}) "
             f"SELECT COUNT(*) FROM matches m JOIN verdicts v ON v.id = m.id WHERE {has_doc_cond.replace('verdicts.', 'v.')}",
@@ -523,7 +537,7 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
     cols = ", ".join(f"verdicts.{f}" for f in _FIELDS)
     order = _order_sql(sort, use_bm25)
 
-    if count_where and not use_bm25:
+    if needs_cap and not use_bm25:
         # אותה מלכודת שהערת ה-COUNT למעלה מתעדת, מתבררת כפוגעת גם כאן
         # בפועל (נבדק - לא רק תיאורטי): 'בית הדין לענייני מים' (סינון
         # court_type אמיתי וסלקטיבי, 53 תוצאות אמיתיות) עם מיון 'relevance'
@@ -537,8 +551,9 @@ def simple_search(*, name: str = "", judge: str = "", court_type: str = "", city
         # מחושבים למעלה (זהים בדיוק לתנאים שרוצים למסנן לפיהם כאן).
         # אותה תקרה בדיוק כמו ב-COUNT למעלה (_BROAD_FILTER_CAP) ומאותה
         # סיבה - ראו שם. total כבר מוגבל לאותה תקרה, אז pages (ב-app.py)
-        # לעולם לא יבקש offset מעבר למה שה-CTE הזה מכיל.
-        clause = " AND ".join(count_where)
+        # לעולם לא יבקש offset מעבר למה שה-CTE הזה מכיל. count_where ריקה
+        # (relevance בלי שום סינון) -> "1=1", כמו ב-COUNT למעלה.
+        clause = " AND ".join(count_where) if count_where else "1=1"
         cur = conn.execute(
             f"WITH matches AS MATERIALIZED (SELECT id FROM verdicts WHERE {clause} LIMIT {_BROAD_FILTER_CAP}) "
             f"SELECT {cols} FROM matches JOIN verdicts ON verdicts.id = matches.id "
