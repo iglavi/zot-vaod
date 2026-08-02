@@ -39,7 +39,7 @@ function groupByCase(results: Verdict[]): Verdict[][] {
 }
 
 const emptyForm = {
-  name: "", judge: "", case_number: "", city: "", court_type: "",
+  name: "", judge: "", case_number: "",
   date_from: "", date_to: "", free_text: "", match_mode: "exact",
 };
 
@@ -55,14 +55,7 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
-  const [options, setOptions] = useState<{ court_types: string[]; cities: string[] }>({ court_types: [], cities: [] });
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    fetch("/api/search/options").then((r) => r.json()).then((d) => {
-      if (!d.error) setOptions({ court_types: d.court_types ?? [], cities: d.cities ?? [] });
-    }).catch(() => {});
-  }, []);
 
   // תמיכה בקישור-שיתוף (deep link): אם הגענו עם פרמטרים ב-query string
   // (למשל מקישור ששותף), נבנה מהם את הטופס ונריץ חיפוש אוטומטית - פעם
@@ -144,18 +137,6 @@ export default function SearchPage() {
             <Field label="שם שופט/ת">
               <input className="input-field" placeholder="למשל: רוני סלע" value={form.judge}
                 onChange={(e) => set("judge", e.target.value)} />
-            </Field>
-            <Field label="עיר / מחוז">
-              <select className="input-field" value={form.city} onChange={(e) => set("city", e.target.value)}>
-                <option value="">הכל</option>
-                {options.cities.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
-            <Field label="סוג בית משפט">
-              <select className="input-field" value={form.court_type} onChange={(e) => set("court_type", e.target.value)}>
-                <option value="">הכל</option>
-                {options.court_types.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
             </Field>
             <Field label="מתאריך">
               <input type="date" className="input-field" value={form.date_from}
