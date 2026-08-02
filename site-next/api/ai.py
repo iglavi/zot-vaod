@@ -5,6 +5,11 @@
 bool} - citizen_mode (F-13) מבקש ניסוח פשוט ופרקטי במקום ניסוח משפטי
 (ראו zot/ai_search.py: _SYSTEM_ANSWER_CITIZEN).
 
+הגבלת קצב: עד 5 שאלות בשעה לכל כתובת IP (ראו _ai_rate_limit_message) -
+כל שאלה עולה כסף אמיתי (קריאה למודל עם הקשר של פסקי-דין מלאים), אז זו
+הגנה תקציבית ולא רק הגנת-עומס. חריגה חוזרת (3 שעות רצופות של מיצוי
+המכסה) חוסמת ל-24 שעות.
+
 אירועים שנשלחים ללקוח (כל אחד שורת 'data: {...json...}\n\n'):
   step       -> {"step": "received"|"analyzing"|"retrieving"|"answering"}
   sources    -> {"verdicts": [...]}   (נשלח לפני תחילת התשובה, כמו בעיצוב)
@@ -17,6 +22,7 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -28,6 +34,57 @@ from zot import ai_search  # noqa: E402
 from _util import add_download_urls  # noqa: E402
 
 app = Flask(__name__)
+
+# הגבלת-קצב אמיתית על חיפוש ה-AI: כל שאלה עולה כסף אמיתי (קריאה למודל
+# עם הקשר של מסמכי פסקי-דין מלאים - ראו zot/config.py: AI_MAX_DOCS), אז
+# בניגוד ל-/api/search (שם ההגבלה היא הגנה על עומס), כאן היא גם הגנה
+# תקציבית ישירה. הגנה per-instance בזיכרון (לא מבוזרת) - אותה מגבלה
+# כמו ב-api/search.py: לקוח שמפזר בקשות על פני הרבה instances יכול
+# לעקוף חלקית, אבל זה מספיק כדי לעצור שימוש-לרעה נאיבי-חד-מקור.
+#
+# מדיניות (בקשת המשתמש, 2/8/2026): עד 5 שאלות בשעה; אם המכסה המלאה
+# נוצלה ב-3 שעות רצופות (לא רק שיא חד-פעמי אלא דפוס שימוש מתמשך) -
+# חסימה ל-24 שעות.
+_AI_HOURLY_LIMIT = 5
+_AI_BLOCK_HOURS = 24
+_ai_hour_counts: dict[str, dict[int, int]] = defaultdict(dict)
+_ai_blocked_until: dict[str, float] = {}
+
+_AI_HOURLY_MESSAGE = (
+    "הגעתם למכסת חמש השאלות לשעה בחיפוש החכם. אפשר להמשיך בעוד קצת - "
+    "המכסה מתחדשת כל שעה."
+)
+_AI_BLOCKED_MESSAGE = (
+    "זוהה שימוש מתמשך וחריג בחיפוש החכם מהכתובת הזו, ולכן הגישה אליו "
+    "הוגבלה זמנית ל-24 שעות - כדי לשמור על השירות זמין לכלל המשתמשים. "
+    "תודה על ההבנה, ונתראה מחר."
+)
+
+
+def _client_ip() -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else None) or request.remote_addr or "unknown"
+
+
+def _ai_rate_limit_message(ip: str) -> str | None:
+    """מחזיר הודעת-שגיאה למשתמש אם יש לחסום את הבקשה, אחרת None."""
+    now = time.time()
+    blocked_until = _ai_blocked_until.get(ip)
+    if blocked_until and now < blocked_until:
+        return _AI_BLOCKED_MESSAGE
+
+    hour_idx = int(now // 3600)
+    counts = _ai_hour_counts[ip]
+    for h in list(counts.keys()):  # ניקוי שעות ישנות - מונע גדילה בלתי-מוגבלת בזיכרון
+        if h < hour_idx - 4:
+            del counts[h]
+    counts[hour_idx] = counts.get(hour_idx, 0) + 1
+    if counts[hour_idx] > _AI_HOURLY_LIMIT:
+        if all(counts.get(hour_idx - k, 0) >= _AI_HOURLY_LIMIT for k in range(3)):
+            _ai_blocked_until[ip] = now + _AI_BLOCK_HOURS * 3600
+            return _AI_BLOCKED_MESSAGE
+        return _AI_HOURLY_MESSAGE
+    return None
 
 # תקרת זמן-ריצה של הפונקציה (vercel.json: functions."api/*.py".maxDuration).
 # תשובות ארוכות לבד כבר לוקחות עד 40-48 שניות סטרימינג בפועל - קריאת
@@ -67,10 +124,16 @@ def ai_endpoint():
     history = body.get("history") or []
     citizen_mode = bool(body.get("citizen_mode"))
 
+    client_ip = _client_ip()
+
     def stream():
         start = time.monotonic()
         if not question:
             yield _sse("error", {"message": "לא התקבלה שאלה."})
+            return
+        limit_message = _ai_rate_limit_message(client_ip)
+        if limit_message:
+            yield _sse("error", {"message": limit_message})
             return
         if not ai_search.has_ai_credentials():
             yield _sse("error", {"message": "החיפוש החכם אינו מוגדר כרגע (חסר מפתח API)."})

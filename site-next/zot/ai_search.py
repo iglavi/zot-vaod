@@ -527,10 +527,11 @@ _SYSTEM_SUGGEST = (
 def suggest_followups(client, question: str, answer: str) -> list[str]:
     """3 שאלות המשך מוצעות אחרי תשובה - קריאה נפרדת קצרה וזולה (max_tokens
     נמוך, לא streaming) אחרי שהתשובה העיקרית כבר הסתיימה. כשל כאן לא אמור
-    להפיל את הצ'אט - מחזיר רשימה ריקה בשקט."""
+    להפיל את הצ'אט - מחזיר רשימה ריקה בשקט. מודל זול (כמו analyze_query) -
+    משימה פשוטה שלא זקוקה לעוצמת המודל הראשי."""
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=os.environ.get("ZOT_ANALYZE_MODEL") or config.AI_ANALYZE_MODEL,
             max_tokens=200,
             system=_SYSTEM_SUGGEST,
             messages=[{"role": "user", "content": f"שאלה: {question}\n\nתשובה: {answer}"}],
