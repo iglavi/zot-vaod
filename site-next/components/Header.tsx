@@ -22,8 +22,8 @@ export function Header({ active = "/" }: { active?: string }) {
                 href={item.href}
                 className={
                   isActive
-                    ? "bg-green-700 text-white rounded-lg px-4 py-2 font-medium"
-                    : "text-ink/80 hover:text-green-800 px-3 py-2 font-medium"
+                    ? "bg-green-700 text-white rounded-lg px-4 py-2 min-h-[44px] inline-flex items-center font-medium"
+                    : "text-ink/80 hover:text-green-800 px-3 py-2 min-h-[44px] inline-flex items-center font-medium"
                 }
               >
                 {item.label}

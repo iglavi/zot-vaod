@@ -24,7 +24,7 @@ export function HeroSearchBar() {
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="למשל: איך מוגדרת עילת הסבירות?"
-          className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-sm py-2"
+          className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-base py-2"
         />
       </div>
       <div className="text-center mt-3 text-sm text-muted">

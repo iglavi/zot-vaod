@@ -156,7 +156,7 @@ export function AiChat() {
       <div className="container-page pt-6">
         <button
           onClick={() => setSidebarOpen((v) => !v)}
-          className="text-xs text-green-700 hover:text-green-900 flex items-center gap-1.5 mb-2"
+          className="text-xs text-green-700 hover:text-green-900 flex items-center gap-1.5 mb-2 min-h-[44px]"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -221,7 +221,7 @@ export function AiChat() {
               disabled={step !== null}
               onChange={(e) => setInput(e.target.value)}
               placeholder="הקלידו שאלה משפטית בשפה חופשית... (לדוגמה: 'איך מוגדרת עילת הסבירות?')"
-              className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-sm py-2 disabled:opacity-60"
+              className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-base py-2 disabled:opacity-60"
             />
           </form>
         </main>

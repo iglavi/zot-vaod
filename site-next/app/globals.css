@@ -9,13 +9,20 @@ html, body { direction: rtl; }
 
 @layer components {
   .container-page { @apply max-w-[1280px] mx-auto px-6; }
-  .btn-primary { @apply bg-green-700 hover:bg-green-800 text-white rounded-lg px-5 py-2.5 text-sm font-medium transition-colors; }
-  .btn-outline { @apply border border-green-700 text-green-700 hover:bg-green-100 rounded-lg px-5 py-2.5 text-sm font-medium transition-colors; }
+  /* min-h-[44px] + inline-flex items-center - יעד-מגע מינימלי לפי הנחיית
+     נגישות למובייל (44x44px), לא רק py-2.5 (שיוצא ~40px עם text-sm) */
+  .btn-primary { @apply bg-green-700 hover:bg-green-800 text-white rounded-lg px-5 py-2.5 min-h-[44px] inline-flex items-center justify-center text-sm font-medium transition-colors; }
+  .btn-outline { @apply border border-green-700 text-green-700 hover:bg-green-100 rounded-lg px-5 py-2.5 min-h-[44px] inline-flex items-center justify-center text-sm font-medium transition-colors; }
   .card { @apply bg-paper border border-border rounded-xl2 shadow-sm; }
   /* border-[#8A8478] (לא border-border הרגיל, #E4DED2) - יחס-הניגודיות של
      #E4DED2 מול הרקע הלבן הוא רק ~1.3:1, הרבה מתחת ל-3:1 שWCAG 1.4.11
      דורש לגבולות רכיבי-UI; #8A8478 (זהה ל-muted הקיים בפלטה) נותן ~3.7:1.
      מוגבל בכוונה ל-.input-field בלבד, לא ל-border-border הגלובלי - זה
      ישפיע גם על מפרידים עיצוביים (Header/Footer) שלא קשורים לנגישות שדות. */
-  .input-field { @apply w-full bg-paper border border-[#8A8478] rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-green-500/40 focus:border-green-600; }
+  /* text-base (16px) לא text-sm - מתחת ל-16px, ספארי ב-iOS מזום אוטומטית
+     את העמוד בפוקוס על שדה קלט (זום לא-רצוי, לא באג בתפיסה - זו התנהגות
+     קבועה של WebKit). זה גם ה"גודל טקסט בסיס" הרלוונטי בפועל למשתמש -
+     ה-root font-size כבר 16px כברירת מחדל, אבל שדות הקלט עצמם היו קטנים
+     מזה בפועל. */
+  .input-field { @apply w-full bg-paper border border-[#8A8478] rounded-lg px-3 py-2 text-base text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-green-500/40 focus:border-green-600; }
 }
