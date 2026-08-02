@@ -6,7 +6,7 @@ export default function HomePage() {
   return (
     <>
       <Header active="/" />
-      <main>
+      <main id="main-content">
         <section className="container-page pt-24 pb-16 text-center">
           <span className="inline-block bg-green-100 text-green-800 text-xs font-medium rounded-full px-4 py-1.5 mb-6">
             לא עוד תשלום מנוי כדי לקבל מידע ציבורי

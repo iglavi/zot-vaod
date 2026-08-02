@@ -108,7 +108,7 @@ export default function SearchPage() {
   return (
     <>
       <Header active="/search" />
-      <main className="container-page py-12">
+      <main id="main-content" className="container-page py-12">
         <form onSubmit={runSearch} className="card p-8">
           <h1 className="text-xl font-semibold text-green-900 mb-6">חיפוש מובנה</h1>
           <div className="grid md:grid-cols-3 gap-5">
@@ -191,7 +191,7 @@ export default function SearchPage() {
         </form>
 
         {results && (
-          <div className="mt-10">
+          <div className="mt-10" aria-live="polite">
             <h2 className="text-sm text-muted mb-4">
               נמצאו {capped ? "מעל " : ""}{total.toLocaleString("he")} תוצאות
             </h2>

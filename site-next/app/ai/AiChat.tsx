@@ -174,8 +174,9 @@ export function AiChat() {
             <div className="text-xs text-muted">היסטוריית השיחה הנוכחית תופיע כאן.</div>
           </aside>
         )}
-        <main>
-          <div className="space-y-5 min-h-[50vh]">
+        <main id="main-content">
+          <h1 className="sr-only">חיפוש AI בפסקי דין</h1>
+          <div className="space-y-5 min-h-[50vh]" aria-live="polite">
             {turns.length === 0 && (
               <p className="text-muted text-sm">שאלו שאלה בשפה חופשית על פסקי הדין במאגר.</p>
             )}

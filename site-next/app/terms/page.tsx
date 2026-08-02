@@ -7,7 +7,7 @@ export default function TermsPage() {
   return (
     <>
       <Header active="/terms" />
-      <main className="container-page py-16 max-w-3xl">
+      <main id="main-content" className="container-page py-16 max-w-3xl">
         <h1 className="font-display text-3xl text-green-900 mb-6">תנאי שימוש</h1>
         <div className="space-y-5 text-sm leading-relaxed text-ink/80">
           <p>

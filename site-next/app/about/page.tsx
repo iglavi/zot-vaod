@@ -5,7 +5,7 @@ export default function AboutPage() {
   return (
     <>
       <Header active="/about" />
-      <main className="container-page py-16">
+      <main id="main-content" className="container-page py-16">
         <h1 className="font-display text-3xl text-green-900 mb-4">למה צריך את זה?</h1>
         <p className="text-sm leading-relaxed text-ink/80 max-w-3xl">
           דו&quot;ח מבקר המדינה משנת 2022 קבע שממולץ כי המידע באתר נט-המשפט
