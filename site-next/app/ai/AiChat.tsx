@@ -16,6 +16,31 @@ type Turn = {
   text: string;
   sources?: Source[];
 };
+type Conversation = { id: string; title: string; turns: Turn[]; updatedAt: number };
+
+const HISTORY_KEY = "giluy-naot-ai-history";
+const MAX_SAVED_CONVERSATIONS = 20;
+
+// localStorage בלבד (לא שרת) - אין מערכת חשבונות/התחברות באתר הזה, אז
+// זו הדרך היחידה כרגע לשמר היסטוריית שיחות בין טעינות-דף בלי לבנות
+// backend חדש. נכשל בשקט (try/catch) - מצב פרטי/quota לא אמור להפיל
+// את הצ'אט עצמו, רק את השמירה.
+function loadConversations(): Conversation[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveConversations(list: Conversation[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_SAVED_CONVERSATIONS)));
+  } catch {
+    // אין מקום/פרטי - מתעלמים, זו לא שגיאה שהמשתמש צריך לראות
+  }
+}
 
 export function AiChat() {
   const params = useSearchParams();
@@ -23,10 +48,13 @@ export function AiChat() {
   const [input, setInput] = useState("");
   const [step, setStep] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [history, setHistoryList] = useState<Conversation[]>([]);
   const startedRef = useRef(false);
   const stepRef = useRef<HTMLDivElement>(null);
+  const conversationIdRef = useRef<string>("");
 
   useEffect(() => {
+    setHistoryList(loadConversations());
     const q = params.get("q");
     if (q && !startedRef.current) {
       startedRef.current = true;
@@ -34,6 +62,39 @@ export function AiChat() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // שומר את השיחה הנוכחית ל-localStorage בכל שינוי בתורות - יוצר רשומה
+  // חדשה בהודעה הראשונה (עם כותרת = תחילת השאלה), מעדכן אותה בכל תור
+  // נוסף. לא שומר שיחה ריקה.
+  useEffect(() => {
+    if (turns.length === 0) return;
+    if (!conversationIdRef.current) {
+      conversationIdRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const firstUserTurn = turns.find((t) => t.role === "user");
+    const title = firstUserTurn ? firstUserTurn.text.slice(0, 60) : "שיחה";
+    setHistoryList((prev) => {
+      const withoutCurrent = prev.filter((c) => c.id !== conversationIdRef.current);
+      const updated: Conversation[] = [
+        { id: conversationIdRef.current, title, turns, updatedAt: Date.now() },
+        ...withoutCurrent,
+      ];
+      saveConversations(updated);
+      return updated;
+    });
+  }, [turns]);
+
+  function startNewConversation() {
+    conversationIdRef.current = "";
+    setTurns([]);
+    startedRef.current = true;
+  }
+
+  function openConversation(c: Conversation) {
+    conversationIdRef.current = c.id;
+    setTurns(c.turns);
+    startedRef.current = true;
+  }
 
   // גוללים לאזור "תהליך החשיבה" רק כשהשלב עצמו משתנה (קיבלתי/מנתח/מחפש/
   // מנסח) - לא בכל תו שמוזרם בתשובה. זה מה שמונע מהעמוד "למשוך" את
@@ -168,10 +229,29 @@ export function AiChat() {
       <div className={`container-page pb-8 grid gap-2 grid-cols-1 ${sidebarOpen ? "md:grid-cols-[260px_1fr]" : ""}`}>
         {sidebarOpen && (
           <aside className="pl-8 border-l border-border ml-2 hidden md:block">
-            <button className="btn-outline w-full mb-4" onClick={() => { setTurns([]); startedRef.current = true; }}>
+            <button className="btn-outline w-full mb-4" onClick={startNewConversation}>
               שיחה חדשה +
             </button>
-            <div className="text-xs text-muted">היסטוריית השיחה הנוכחית תופיע כאן.</div>
+            {history.length === 0 ? (
+              <div className="text-xs text-muted">היסטוריית השיחות תופיע כאן.</div>
+            ) : (
+              <div className="space-y-1">
+                {history.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => openConversation(c)}
+                    className={`w-full text-right text-xs px-2 py-2 rounded-md truncate ${
+                      c.id === conversationIdRef.current
+                        ? "bg-green-100 text-green-800 font-medium"
+                        : "text-ink/70 hover:bg-cream"
+                    }`}
+                    title={c.title}
+                  >
+                    {c.title || "שיחה"}
+                  </button>
+                ))}
+              </div>
+            )}
           </aside>
         )}
         <main id="main-content">
