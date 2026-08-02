@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { DateLtr } from "./DateLtr";
 
 type Verdict = {
@@ -63,6 +64,70 @@ export function VerdictCard({ v }: { v: Verdict }) {
           className="text-xs text-ink/70 mt-2 leading-relaxed [&_mark]:bg-green-200 [&_mark]:text-green-900 [&_mark]:rounded-sm [&_mark]:px-0.5"
           dangerouslySetInnerHTML={{ __html: v.snippet }}
         />
+      )}
+    </div>
+  );
+}
+
+const _CASE_GROUP_TIMELINE_CAP = 40;
+
+/** כרטיס-קיבוץ לכמה החלטות שחולקות אותו (בית משפט, מספר תיק) - למשל
+ * החלטת-ביניים + פסק דין, או תיק פשיטת-רגל/פירוק עם עשרות-מאות החלטות
+ * דיוניות. הקיבוץ מתבצע רק בתוך עמוד התוצאות הנוכחי (ראו SearchPage.tsx) -
+ * לא שאילתת-DB חדשה - כדי לא לחזור על מלכודת ה-GROUP BY המלא שכבר נצפתה
+ * (ראו הערה ב-zot/search.py: _distinct_values). items ממוינים כאן לפי
+ * תאריך יורד; item[0] (העדכני ביותר) משמש לכותרת הקבוצה. */
+export function CaseGroupCard({ items }: { items: Verdict[] }) {
+  const [open, setOpen] = useState(false);
+  const sorted = [...items].sort((a, b) =>
+    (b.decision_date || b.filed_date || "").localeCompare(a.decision_date || a.filed_date || "")
+  );
+  const head = sorted[0];
+  const shown = sorted.slice(0, _CASE_GROUP_TIMELINE_CAP);
+  const hidden = sorted.length - shown.length;
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="bg-amber-100 text-amber-800 rounded-full px-3 py-1 font-medium">
+            {sorted.length} החלטות בתיק זה
+          </span>
+          <span className="text-muted">{head.case_number}</span>
+        </div>
+      </div>
+      <div className="font-medium text-ink">{head.parties || "ללא שם צדדים"}</div>
+      <div className="text-xs text-muted mt-1 flex items-center gap-1 flex-wrap">
+        <span>{head.court}</span>
+      </div>
+
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="mt-3 text-xs text-green-700 underline hover:text-green-900 min-h-[44px] inline-flex items-center"
+        aria-expanded={open}
+      >
+        {open ? "הסתר ציר זמן" : "הצג ציר זמן של כל ההחלטות בתיק"}
+      </button>
+
+      {open && (
+        <div className="mt-2 border-t border-border pt-3 space-y-2">
+          {shown.map((v) => (
+            <div key={v.id} className="flex items-center justify-between gap-3 text-xs flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="bg-green-100 text-green-800 rounded-full px-2.5 py-0.5 font-medium">
+                  {v.decision_type || "החלטה"}
+                </span>
+                <DateLtr value={v.decision_date || v.filed_date} />
+              </div>
+              <DocLinks v={v} size="small" />
+            </div>
+          ))}
+          {hidden > 0 && (
+            <p className="text-xs text-muted pt-1">
+              ועוד {hidden.toLocaleString("he")} החלטות נוספות בתיק זה - חפשו לפי מספר תיק ({head.case_number}) לצפייה בכולן.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
