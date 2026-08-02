@@ -31,6 +31,7 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
   const [options, setOptions] = useState<{ court_types: string[]; case_types: string[] }>({ court_types: [], case_types: [] });
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     fetch("/api/search/options").then((r) => r.json()).then((d) => {
@@ -42,7 +43,7 @@ export default function SearchPage() {
     setForm((f) => ({ ...f, [key]: val }));
   }
 
-  async function runSearch(e?: React.FormEvent) {
+  async function runSearch(e?: React.FormEvent, targetPage = 1) {
     e?.preventDefault();
     setLoading(true);
     setError(null);
@@ -52,11 +53,13 @@ export default function SearchPage() {
       const params = new URLSearchParams(
         Object.entries(form).filter(([, v]) => v).map(([k, v]) => [k, v])
       );
+      params.set("page", String(targetPage));
       const res = await fetch(`/api/search?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בחיפוש");
       setResults(data.results);
       setTotal(data.total);
+      setPage(targetPage);
     } catch (err: any) {
       setError(err.message ?? "שגיאה בחיפוש");
     } finally {
@@ -65,6 +68,9 @@ export default function SearchPage() {
       setStep(null);
     }
   }
+
+  const perPage = 10;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   return (
     <>
@@ -162,6 +168,25 @@ export default function SearchPage() {
                 <p className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</p>
               )}
             </div>
+            {results.length > 0 && totalPages > 1 && (
+              <div className="flex items-center justify-center gap-3 mt-8">
+                <button
+                  disabled={page <= 1 || loading}
+                  onClick={() => runSearch(undefined, page - 1)}
+                  className="btn-outline disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  הקודם
+                </button>
+                <span className="text-sm text-muted">עמוד {page} מתוך {totalPages}</span>
+                <button
+                  disabled={page >= totalPages || loading}
+                  onClick={() => runSearch(undefined, page + 1)}
+                  className="btn-outline disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  הבא
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>
