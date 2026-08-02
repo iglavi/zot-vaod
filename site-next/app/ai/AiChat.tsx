@@ -47,11 +47,12 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** מפצל את טקסט התשובה לקטעים, והופך כל הופעה של מספר-תיק שמופיע גם
- * ברשימת המקורות לקישור-עוגן לכרטיס המקור המתאים (id="source-{turnIndex}-{s.id}").
- * מיון לפי אורך יורד לפני בניית ה-regex - מונע התאמה-חלקית שגויה כשמספר
- * תיק אחד הוא תת-מחרוזת של אחר. */
-function renderAnswerWithCitationLinks(text: string, sources: Source[] | undefined, turnIndex: number) {
+/** מפצל קטע-טקסט (לא כל התשובה - ראו renderAnswerWithFormatting) לפי
+ * הופעות של מספר-תיק שמופיע גם ברשימת המקורות, והופך כל הופעה לקישור-
+ * עוגן לכרטיס המקור המתאים (id="source-{turnIndex}-{s.id}"). מיון לפי
+ * אורך יורד לפני בניית ה-regex - מונע התאמה-חלקית שגויה כשמספר תיק אחד
+ * הוא תת-מחרוזת של אחר. */
+function linkCitations(text: string, sources: Source[] | undefined, turnIndex: number, keyPrefix: string) {
   const withNumbers = (sources ?? []).filter((s) => s.case_number);
   if (withNumbers.length === 0) return text;
   const byNumber = new Map(withNumbers.map((s) => [s.case_number, s]));
@@ -63,7 +64,7 @@ function renderAnswerWithCitationLinks(text: string, sources: Source[] | undefin
     if (!source) return part;
     return (
       <a
-        key={i}
+        key={`${keyPrefix}-${i}`}
         href={`#source-${turnIndex}-${source.id}`}
         onClick={(e) => {
           e.preventDefault();
@@ -74,6 +75,28 @@ function renderAnswerWithCitationLinks(text: string, sources: Source[] | undefin
       >
         {part}
       </a>
+    );
+  });
+}
+
+const _CLAIM_TAG_RE = /<טענה>([\s\S]*?)<\/טענה>/g;
+
+/** F-7: מפריד חזותית בין "מה נטען" (בתוך <טענה>...</טענה>, ראו
+ * _SYSTEM_ANSWER) לבין שאר התשובה (קביעות/ניסוח כללי) - מוצג עם עיצוב
+ * שונה בבירור, לא רק ניסוח מילולי (M-03). בזמן streaming, תגית עדיין
+ * לא-סגורה פשוט לא תואמת את ה-regex ומוצגת כטקסט רגיל עד שהתשובה
+ * מסתיימת - חוסר-עיצוב זמני, לא שגיאה. */
+function renderAnswerWithFormatting(text: string, sources: Source[] | undefined, turnIndex: number) {
+  const segments = text.split(_CLAIM_TAG_RE);
+  // split עם קבוצת-לכידה מחזיר לסירוגין: [רגיל, טענה, רגיל, טענה, ...]
+  return segments.map((seg, i) => {
+    const isClaim = i % 2 === 1;
+    const linked = linkCitations(seg, sources, turnIndex, `seg${i}`);
+    if (!isClaim) return <span key={i}>{linked}</span>;
+    return (
+      <span key={i} className="bg-amber-50 border-r-2 border-amber-400 pr-2 inline-block my-0.5">
+        <span className="text-[10px] text-amber-700 align-super">טענה</span> {linked}
+      </span>
     );
   });
 }
@@ -92,7 +115,10 @@ export function AiChat() {
 
   async function copyAnswer(text: string, index: number) {
     try {
-      await navigator.clipboard.writeText(text);
+      // מסירים תגיות <טענה> (ראו F-7/renderAnswerWithFormatting) - רק
+      // עיצוב-תצוגה, לא אמורות להיות חלק מהטקסט המועתק בפועל.
+      const plain = text.replace(/<טענה>([\s\S]*?)<\/טענה>/g, "$1");
+      await navigator.clipboard.writeText(plain);
       setCopiedIndex(index);
       setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 2000);
     } catch {
@@ -335,7 +361,7 @@ export function AiChat() {
                     </div>
                   )}
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {t.role === "assistant" ? renderAnswerWithCitationLinks(t.text, t.sources, i) : t.text}
+                    {t.role === "assistant" ? renderAnswerWithFormatting(t.text, t.sources, i) : t.text}
                   </p>
                   {t.role === "assistant" && t.text && !(step && i === turns.length - 1) && (
                     <button
