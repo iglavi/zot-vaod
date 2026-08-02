@@ -17,6 +17,7 @@ export function Footer() {
             <a href="#" className="hover:text-green-800">תרומות לתמיכה</a>
             <a href="#" className="hover:text-green-800">הצהרת נגישות</a>
             <a href="/coverage" className="hover:text-green-800">שקיפות המאגר</a>
+            <a href="/docs" className="hover:text-green-800">API למפתחים</a>
             <a href="/privacy" className="hover:text-green-800">מדיניות פרטיות</a>
             <a href="/terms" className="hover:text-green-800">תנאי שימוש</a>
           </div>
