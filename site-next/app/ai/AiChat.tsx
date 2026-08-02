@@ -220,7 +220,7 @@ export function AiChat() {
               value={input}
               disabled={step !== null}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="הקלידו שאלה, נוסחו מסמך כאן... (לדוגמה: 'איך מוגדרת עילת הסבירות?')"
+              placeholder="הקלידו שאלה משפטית בשפה חופשית... (לדוגמה: 'איך מוגדרת עילת הסבירות?')"
               className="flex-1 bg-transparent outline-none text-sm py-2 disabled:opacity-60"
             />
           </form>

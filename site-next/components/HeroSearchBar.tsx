@@ -23,7 +23,7 @@ export function HeroSearchBar() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="מהו פסק הדין העדכני ביותר של השופט כפכפי?"
+          placeholder="למשל: איך מוגדרת עילת הסבירות?"
           className="flex-1 bg-transparent outline-none text-sm py-2"
         />
       </div>
