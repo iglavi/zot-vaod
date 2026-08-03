@@ -26,12 +26,12 @@ function DocLinks({ v, size = "normal" }: { v: Verdict; size?: "normal" | "small
     <div className="flex items-center gap-2 shrink-0">
       {v.docx_url && (
         <a href={v.docx_url} target="_blank" rel="noopener noreferrer" className={cls}>
-          📝 Word
+          <span aria-hidden="true">📝</span> Word
         </a>
       )}
       {v.pdf_url && (
         <a href={v.pdf_url} target="_blank" rel="noopener noreferrer" className={cls}>
-          📄 PDF
+          <span aria-hidden="true">📄</span> PDF
         </a>
       )}
     </div>
