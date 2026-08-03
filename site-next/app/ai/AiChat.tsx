@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { ThinkingSteps } from "@/components/ThinkingSteps";
+import { ThinkingSteps, STEP_LABELS } from "@/components/ThinkingSteps";
 import { SourceCard } from "@/components/VerdictCard";
 
 type Source = {
@@ -359,7 +359,14 @@ export function AiChat() {
         </aside>
         <main id="main-content">
           <h1 className="sr-only">חיפוש AI בפסקי דין</h1>
-          <div className="space-y-5 min-h-[50vh]" aria-live="polite">
+          <p role="status" className="sr-only">
+            {step
+              ? STEP_LABELS[step] ?? step
+              : turns.length > 0 && turns[turns.length - 1].role === "assistant"
+              ? "התקבלה תשובה"
+              : ""}
+          </p>
+          <div className="space-y-5 min-h-[50vh]">
             {turns.length === 0 && (
               <p className="text-muted text-sm">שאלו שאלה בשפה חופשית על פסקי הדין במאגר.</p>
             )}
