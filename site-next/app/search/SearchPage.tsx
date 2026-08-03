@@ -309,6 +309,7 @@ export default function SearchPage() {
             <Field label="מתאריך">
               <input
                 type="date"
+                autoComplete="off"
                 className="input-field"
                 value={form.date_from}
                 onChange={(e) => set("date_from", e.target.value)}
@@ -319,6 +320,7 @@ export default function SearchPage() {
             <Field label="עד תאריך">
               <input
                 type="date"
+                autoComplete="off"
                 className="input-field"
                 value={form.date_to}
                 onChange={(e) => set("date_to", e.target.value)}
