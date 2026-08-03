@@ -348,7 +348,7 @@ export default function SearchPage() {
           <fieldset className="mt-5 border-0 p-0 m-0">
             <legend className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</legend>
             <div className="flex items-center gap-6 text-sm">
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
                 <input
                   type="radio"
                   name="match_mode"
@@ -358,7 +358,7 @@ export default function SearchPage() {
                 />
                 התאמה מדויקת
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
                 <input
                   type="radio"
                   name="match_mode"

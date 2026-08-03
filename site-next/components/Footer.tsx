@@ -14,12 +14,12 @@ export function Footer() {
             <LogoIcon size={26} />
           </div>
           <div className="flex md:justify-end flex-wrap gap-x-6 gap-y-2 text-sm text-ink/70">
-            <a href="#" className="hover:text-green-800">תרומות לתמיכה</a>
-            <a href="#" className="hover:text-green-800">הצהרת נגישות</a>
-            <a href="/coverage" className="hover:text-green-800">שקיפות המאגר</a>
-            <a href="/docs" className="hover:text-green-800">API למפתחים</a>
-            <a href="/privacy" className="hover:text-green-800">מדיניות פרטיות</a>
-            <a href="/terms" className="hover:text-green-800">תנאי שימוש</a>
+            <a href="#" className="hover:text-green-800 inline-flex items-center min-h-[44px]">תרומות לתמיכה</a>
+            <a href="#" className="hover:text-green-800 inline-flex items-center min-h-[44px]">הצהרת נגישות</a>
+            <a href="/coverage" className="hover:text-green-800 inline-flex items-center min-h-[44px]">שקיפות המאגר</a>
+            <a href="/docs" className="hover:text-green-800 inline-flex items-center min-h-[44px]">API למפתחים</a>
+            <a href="/privacy" className="hover:text-green-800 inline-flex items-center min-h-[44px]">מדיניות פרטיות</a>
+            <a href="/terms" className="hover:text-green-800 inline-flex items-center min-h-[44px]">תנאי שימוש</a>
           </div>
         </div>
       </div>
