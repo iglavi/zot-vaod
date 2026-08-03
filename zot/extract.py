@@ -714,6 +714,21 @@ _BARE_DEFENDANT_LABEL_RE = re.compile(
 )
 
 
+# תיקים מאוחדים (כמה מספרי-תיק תחת אותם צדדים, בעיקר בית הדין הארצי
+# לעבודה) כותבים לפעמים את תיאור-התפקיד כ'בע"ע 16337-01-24' ('בערעור
+# מספר...') על שורה נפרדת מהשם, לפני שם הצד השני - וכשהצד הזה (השם
+# עצמו) לא נתפס כלל (מבנה לא-סטנדרטי, למשל שם על שורה נפרדת ממוספרת
+# למעלה: '1.X\n2.Y'), התווית-הבאה שנתפסת בטעות כ"שם" היא בעצם הפניית
+# מספר-תיק כזו, לא שם אמיתי. מזוהה לפי המבנה (אות/גרש קצרים ואז מספר-
+# תיק עם '-' או '/'), לא לפי רשימת case-type-tokens סגורה, כי הכתיב
+# משתנה (גרשיים/נקודה/כלום: 'בע"ע'/'בת.א'/'בתיק').
+_CASE_CITATION_NAME_RE = re.compile(r'^ב[א-ת."\'׳]{1,8}\s*\d+[/-]\d')
+
+
+def _looks_like_case_citation(name: str) -> bool:
+    return bool(_CASE_CITATION_NAME_RE.match(name))
+
+
 def _extract_parties_bare_labels(text: str) -> str:
     """גיבוי-גיבוי ל-_extract_parties_after_judges: תווית-צד חשופה בלי
     ':' (ראו _BARE_PLAINTIFF_LABEL_RE/_BARE_DEFENDANT_LABEL_RE למעלה).
@@ -731,6 +746,8 @@ def _extract_parties_bare_labels(text: str) -> str:
     p_name, p_more = _first_party_name(window[p_label.end():d_label.start()])
     d_name, d_more = _first_party_name(window[d_label.end():])
     if not (2 <= len(p_name) <= 80) or not (2 <= len(d_name) <= 80):
+        return ""
+    if _looks_like_case_citation(p_name) or _looks_like_case_citation(d_name):
         return ""
     p_disp = p_name + (" ואח'" if p_more else "")
     d_disp = d_name + (" ואח'" if d_more else "")
@@ -758,6 +775,8 @@ def _extract_parties_after_judges(text: str) -> str:
         # למסמך פגום/לא-סטנדרטי, לא לכתיב-בלי-':' - וניסיון bare_labels
         # על אותו טקסט פגום נמצא בפועל תופס זבל (למשל טקסט מייצוג-משפטי
         # שבטעות נראה כמו "שם חשוף").
+        return ""
+    if _looks_like_case_citation(p_name) or _looks_like_case_citation(d_name):
         return ""
     p_disp = p_name + (" ואח'" if p_more else "")
     d_disp = d_name + (" ואח'" if d_more else "")
