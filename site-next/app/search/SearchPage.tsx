@@ -277,8 +277,8 @@ export default function SearchPage() {
               </select>
             </Field>
           </div>
-          <div className="mt-5">
-            <span className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</span>
+          <fieldset className="mt-5 border-0 p-0 m-0">
+            <legend className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</legend>
             <div className="flex items-center gap-6 text-sm">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -301,7 +301,7 @@ export default function SearchPage() {
                 התאמה חלקית
               </label>
             </div>
-          </div>
+          </fieldset>
           <button type="submit" disabled={loading} className="btn-primary mt-6 w-full md:w-auto">
             {loading ? "מחפש…" : "ביצוע חיפוש במאגר"}
           </button>
