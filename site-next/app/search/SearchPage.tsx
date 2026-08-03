@@ -67,6 +67,7 @@ export default function SearchPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dateError, setDateError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
 
   type Cursor = { pendingRows: Verdict[]; nextRawPage: number; hasMore: boolean; lastTotal: number; lastCapped: boolean };
@@ -83,9 +84,37 @@ export default function SearchPage() {
     );
     params.set("page", String(apiPage));
     const res = await fetch(`/api/search?${params.toString()}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "שגיאה בחיפוש");
+    // סטטוס 504 (timeout ברמת הפלטפורמה) לא מחזיר JSON תקין בכלל - חייב
+    // להיבדק לפני נסיון ה-parse.
+    if (res.status === 504) {
+      throw Object.assign(new Error("timeout"), { name: "SearchTimeoutError" });
+    }
+    let data: any;
+    try {
+      data = await res.json();
+    } catch {
+      throw Object.assign(new Error("invalid response"), { name: "SearchTimeoutError" });
+    }
+    if (!res.ok) {
+      // 429 (הגבלת-קצב) כבר מחזיר הודעה ספציפית ומנוסחת-למשתמש מהשרת -
+      // רק שגיאות בלתי-צפויות אחרות (500 עם dump גולמי של חריגה) מוחלפות
+      // בניסוח הכללי הנדרש כאן.
+      if (res.status === 429) throw new Error(data.error || "שגיאה בחיפוש");
+      throw Object.assign(new Error(data.error || "שגיאה בחיפוש"), { name: "SearchServerError" });
+    }
     return data as { results: Verdict[]; total: number; capped: boolean };
+  }
+
+  /** מנסח הודעת-שגיאה ידידותית למשתמש מתוך שגיאה שנזרקה מ-fetchApiPage
+   * (ראו A11Y-11: לא לחשוף חריגות גולמיות/שגיאות דפדפן טכניות). */
+  function errorMessageFor(err: any): string {
+    if (err?.name === "SearchTimeoutError") {
+      return "החיפוש ארך זמן רב מדי והופסק. נסו לצמצם אותו — למשל בטווח תאריכים.";
+    }
+    if (err?.name === "SearchServerError") {
+      return "משהו השתבש אצלנו — לא אצלכם. נסו שוב בעוד רגע.";
+    }
+    return err?.message ?? "שגיאה בחיפוש";
   }
 
   /** בונה עמוד-תצוגה אחד (עד 10 קבוצות - החלטות מאותו הליך מקובצות יחד,
@@ -138,8 +167,30 @@ export default function SearchPage() {
   async function startNewSearch(e?: React.FormEvent, formOverride?: typeof form) {
     e?.preventDefault();
     const activeForm = formOverride ?? form;
-    setLoading(true);
     setError(null);
+    setDateError(null);
+
+    const hasAnyField = Object.entries(activeForm).some(
+      ([k, v]) => k !== "match_mode" && k !== "sort" && v
+    );
+    if (!hasAnyField) {
+      setError("מלאו לפחות שדה אחד כדי לחפש.");
+      return;
+    }
+    if (activeForm.date_from && activeForm.date_to && activeForm.date_from > activeForm.date_to) {
+      setDateError("תאריך ההתחלה מאוחר מתאריך הסיום. החליפו ביניהם.");
+      return;
+    }
+    const now = new Date();
+    // בונים YYYY-MM-DD מרכיבי-התאריך המקומיים (לא toISOString, שממיר
+    // ל-UTC ועלול להראות "מחר" עוד לפני חצות שעון ישראל).
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if ((activeForm.date_from && activeForm.date_from > today) || (activeForm.date_to && activeForm.date_to > today)) {
+      setDateError(`המאגר מעודכן עד ${now.toLocaleDateString("he")}. בחרו תאריך מוקדם יותר.`);
+      return;
+    }
+
+    setLoading(true);
     setStep("received");
     const stepTimer = setTimeout(() => setStep("retrieving"), 400);
     try {
@@ -149,7 +200,7 @@ export default function SearchPage() {
       cursorRef.current = cursor;
       updateUrlPage(activeForm, 1);
     } catch (err: any) {
-      setError(err.message ?? "שגיאה בחיפוש");
+      setError(errorMessageFor(err));
     } finally {
       clearTimeout(stepTimer);
       setLoading(false);
@@ -173,7 +224,7 @@ export default function SearchPage() {
       cursorRef.current = cursor;
       updateUrlPage(form, pageCache.length + 1);
     } catch (err: any) {
-      setError(err.message ?? "שגיאה בחיפוש");
+      setError(errorMessageFor(err));
     } finally {
       setLoading(false);
     }
@@ -222,7 +273,7 @@ export default function SearchPage() {
           setPageIndex(pages.length - 1);
           cursorRef.current = cursor;
         } catch (err: any) {
-          setError(err.message ?? "שגיאה בחיפוש");
+          setError(errorMessageFor(err));
         } finally {
           clearTimeout(stepTimer);
           setLoading(false);
@@ -256,14 +307,31 @@ export default function SearchPage() {
                 onChange={(e) => set("judge", e.target.value)} />
             </Field>
             <Field label="מתאריך">
-              <input type="date" className="input-field" value={form.date_from}
-                onChange={(e) => set("date_from", e.target.value)} />
+              <input
+                type="date"
+                className="input-field"
+                value={form.date_from}
+                onChange={(e) => set("date_from", e.target.value)}
+                aria-invalid={!!dateError}
+                aria-describedby={dateError ? "err-date" : undefined}
+              />
             </Field>
             <Field label="עד תאריך">
-              <input type="date" className="input-field" value={form.date_to}
-                onChange={(e) => set("date_to", e.target.value)} />
+              <input
+                type="date"
+                className="input-field"
+                value={form.date_to}
+                onChange={(e) => set("date_to", e.target.value)}
+                aria-invalid={!!dateError}
+                aria-describedby={dateError ? "err-date" : undefined}
+              />
             </Field>
           </div>
+          {dateError && (
+            <p id="err-date" role="alert" className="text-sm text-red-600 mt-3">
+              {dateError}
+            </p>
+          )}
           <div className="mt-5">
             <Field label="חיפוש חופשי בטקסט">
               <input className="input-field" placeholder="מילים בגוף פסק הדין" value={form.free_text}
@@ -305,7 +373,7 @@ export default function SearchPage() {
           <button type="submit" disabled={loading} className="btn-primary mt-6 w-full md:w-auto">
             {loading ? "מחפש…" : "ביצוע חיפוש במאגר"}
           </button>
-          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+          {error && <p role="alert" className="text-sm text-red-600 mt-3">{error}</p>}
           {step && (
             <div className="mt-4">
               <ThinkingSteps step={step} labels={{ received: "קיבלתי את הבקשה…", retrieving: "מחפש בהתאמה למאגר…" }} order={["received", "retrieving"]} />
