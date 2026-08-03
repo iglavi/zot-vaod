@@ -440,7 +440,9 @@ export function AiChat() {
             <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
               {step !== null ? "מעבד…" : "שאלו"}
             </button>
+            <label htmlFor="ai-question" className="sr-only">השאלה שלכם</label>
             <input
+              id="ai-question"
               value={input}
               disabled={step !== null}
               onChange={(e) => setInput(e.target.value)}

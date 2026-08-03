@@ -19,7 +19,9 @@ export function HeroSearchBar() {
           </svg>
           שאלו את ה-AI
         </button>
+        <label htmlFor="hero-question" className="sr-only">השאלה שלכם</label>
         <input
+          id="hero-question"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
