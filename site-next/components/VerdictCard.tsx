@@ -63,7 +63,7 @@ export function VerdictCard({ v }: { v: Verdict }) {
         </div>
         <DocLinks v={v} />
       </div>
-      <div className="font-medium text-ink">{v.parties || "ללא שם צדדים"}</div>
+      <h3 className="font-medium text-ink">{v.parties || "ללא שם צדדים"}</h3>
       <div className="text-xs text-muted mt-1 flex items-center gap-1 flex-wrap">
         <span>{v.court}</span>
         {v.court && <span>·</span>}
@@ -108,7 +108,7 @@ export function CaseGroupCard({ items }: { items: Verdict[] }) {
           <span className="text-muted">{head.case_number}</span>
         </div>
       </div>
-      <div className="font-medium text-ink">{head.parties || "ללא שם צדדים"}</div>
+      <h3 className="font-medium text-ink">{head.parties || "ללא שם צדדים"}</h3>
       <div className="text-xs text-muted mt-1 flex items-center gap-1 flex-wrap">
         <span>{head.court}</span>
       </div>

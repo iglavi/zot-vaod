@@ -320,16 +320,16 @@ export default function SearchPage() {
                 נמצאו {current.capped ? "מעל " : ""}{current.total.toLocaleString("he")} תוצאות
               </h2>
             </div>
-            <div className="space-y-3">
+            <ul role="list" className="space-y-3 list-none p-0 m-0">
               {current.groups.map((group) => (
-                <div key={`${group[0].court} ${group[0].case_number}`}>
+                <li key={`${group[0].court} ${group[0].case_number}`}>
                   {group.length > 1 ? <CaseGroupCard items={group} /> : <VerdictCard v={group[0]} />}
-                </div>
+                </li>
               ))}
               {current.groups.length === 0 && (
-                <p className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</p>
+                <li className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</li>
               )}
-            </div>
+            </ul>
             {current.groups.length > 0 && (pageIndex > 0 || pageIndex + 1 < pageCache.length || cursorRef.current.hasMore) && (
               <div className="flex items-center justify-center gap-3 mt-8">
                 <button
