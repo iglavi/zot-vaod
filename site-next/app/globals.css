@@ -7,6 +7,16 @@ html, body { direction: rtl; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin-slow { animation: spin 2.2s linear infinite; }
 
+/* אין הגדרה גלובלית מפורשת לטבעת-פוקוס בקוד הזה - כלומר רכיבים שלא
+   משתמשים בפועל ב-focus-visible:ring-* של Tailwind (כפתורים/קישורים/
+   צ'קבוקסים רבים באתר) נשענים על ה-outline הדפדפני המובנה, שצבעו תלוי
+   בדפדפן/מערכת-הפעלה/ערכת-נושא ולא מובטח לעמוד ב-1.4.11 (3:1). #B36B00
+   נותן 3.92:1 מול הרקע #FAF7F1 של האתר. */
+:focus-visible {
+  outline: 3px solid #B36B00;
+  outline-offset: 2px;
+}
+
 @layer components {
   .container-page { @apply max-w-[1280px] mx-auto px-6; }
   /* min-h-[44px] + inline-flex items-center - יעד-מגע מינימלי לפי הנחיית
