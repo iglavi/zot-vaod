@@ -25,12 +25,24 @@ function DocLinks({ v, size = "normal" }: { v: Verdict; size?: "normal" | "small
   return (
     <div className="flex items-center gap-2 shrink-0">
       {v.docx_url && (
-        <a href={v.docx_url} target="_blank" rel="noopener noreferrer" className={cls}>
+        <a
+          href={v.docx_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cls}
+          aria-label={`פתחו את פסק הדין בתיק ${v.case_number} — קובץ Word (נפתח בחלון חדש)`}
+        >
           <span aria-hidden="true">📝</span> Word
         </a>
       )}
       {v.pdf_url && (
-        <a href={v.pdf_url} target="_blank" rel="noopener noreferrer" className={cls}>
+        <a
+          href={v.pdf_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cls}
+          aria-label={`פתחו את פסק הדין בתיק ${v.case_number} — קובץ PDF (נפתח בחלון חדש)`}
+        >
           <span aria-hidden="true">📄</span> PDF
         </a>
       )}
