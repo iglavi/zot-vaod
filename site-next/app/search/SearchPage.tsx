@@ -313,8 +313,16 @@ export default function SearchPage() {
           )}
         </form>
 
+        <p role="status" className="sr-only">
+          {loading
+            ? "מחפש במאגר"
+            : current
+            ? `נמצאו ${current.capped ? "מעל " : ""}${current.total.toLocaleString("he")} תוצאות`
+            : ""}
+        </p>
+
         {current && (
-          <div className="mt-10" aria-live="polite">
+          <div className="mt-10">
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h2 className="text-sm text-muted">
                 נמצאו {current.capped ? "מעל " : ""}{current.total.toLocaleString("he")} תוצאות
