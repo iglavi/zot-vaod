@@ -320,6 +320,8 @@ export function AiChat() {
       <div className="container-page pt-6">
         <button
           onClick={() => setSidebarOpen((v) => !v)}
+          aria-expanded={sidebarOpen}
+          aria-controls="chat-history"
           className="text-xs text-green-700 hover:text-green-900 flex items-center gap-1.5 mb-2 min-h-[44px]"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -330,33 +332,31 @@ export function AiChat() {
         </button>
       </div>
       <div className={`container-page pb-8 grid gap-2 grid-cols-1 ${sidebarOpen ? "md:grid-cols-[260px_1fr]" : ""}`}>
-        {sidebarOpen && (
-          <aside className="pl-8 border-l border-border ml-2 hidden md:block">
-            <button className="btn-outline w-full mb-4" onClick={startNewConversation}>
-              שיחה חדשה +
-            </button>
-            {history.length === 0 ? (
-              <div className="text-xs text-muted">היסטוריית השיחות תופיע כאן.</div>
-            ) : (
-              <div className="space-y-1">
-                {history.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => openConversation(c)}
-                    className={`w-full text-right text-xs px-2 py-2 rounded-md truncate ${
-                      c.id === conversationIdRef.current
-                        ? "bg-green-100 text-green-800 font-medium"
-                        : "text-ink/70 hover:bg-cream"
-                    }`}
-                    title={c.title}
-                  >
-                    {c.title || "שיחה"}
-                  </button>
-                ))}
-              </div>
-            )}
-          </aside>
-        )}
+        <aside id="chat-history" className={sidebarOpen ? "pl-8 border-l border-border ml-2 hidden md:block" : "hidden"}>
+          <button className="btn-outline w-full mb-4" onClick={startNewConversation}>
+            שיחה חדשה +
+          </button>
+          {history.length === 0 ? (
+            <div className="text-xs text-muted">היסטוריית השיחות תופיע כאן.</div>
+          ) : (
+            <div className="space-y-1">
+              {history.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => openConversation(c)}
+                  className={`w-full text-right text-xs px-2 py-2 rounded-md truncate ${
+                    c.id === conversationIdRef.current
+                      ? "bg-green-100 text-green-800 font-medium"
+                      : "text-ink/70 hover:bg-cream"
+                  }`}
+                  title={c.title}
+                >
+                  {c.title || "שיחה"}
+                </button>
+              ))}
+            </div>
+          )}
+        </aside>
         <main id="main-content">
           <h1 className="sr-only">חיפוש AI בפסקי דין</h1>
           <div className="space-y-5 min-h-[50vh]" aria-live="polite">
