@@ -8,7 +8,7 @@ const config: Config = {
         cream: "#FAF7F1",
         paper: "#FFFFFF",
         ink: "#2B2B28",
-        muted: "#8A8478",
+        muted: "#6B665C",
         border: "#E4DED2",
         green: {
           900: "#0C2626",
