@@ -208,13 +208,18 @@ def main() -> int:
 
     def _flush():
         nonlocal pending_turso, pending_uploads
+        # commit local FIRST, before the network calls below - otherwise the
+        # local write lock stays held for the whole R2+Turso round-trip
+        # (can run well past any reasonable busy_timeout) and any other
+        # process writing to index.db concurrently (e.g. fetch_daily.py's
+        # ingest.build()) hard-fails with "database is locked".
+        conn.commit()
         if pending_uploads:
             storage.upload_fulltexts(pending_uploads, verbose=False)
             pending_uploads = []
         if pending_turso:
             _push_turso_update(pending_turso)
             pending_turso = []
-        conn.commit()
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_process, row): row for row in candidates}

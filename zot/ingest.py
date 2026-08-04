@@ -345,7 +345,11 @@ def build(metadata_path: Path | None = None, docs_dir: Path | None = None,
     db_path.parent.mkdir(parents=True, exist_ok=True)
     extra_sources = extra_sources or []
 
-    conn = sqlite3.connect(str(db_path))
+    # timeout=30: retry on "database is locked" instead of failing immediately -
+    # build() can run concurrently with other writers against the same DB_PATH
+    # (e.g. the OCR backfill script), which was seen live as a hard crash
+    # (sqlite3.OperationalError: database is locked) mid-scan otherwise.
+    conn = sqlite3.connect(str(db_path), timeout=30)
     conn.executescript(CACHE_SCHEMA)
     summary_cache = dict(conn.execute("SELECT stem, structural_summary FROM ai_summaries").fetchall())
 
