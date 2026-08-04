@@ -205,13 +205,20 @@ def sync(db_path: Path | None = None, verbose: bool = True) -> dict:
             statements: list[tuple[str, list]] = []
             max_id_in_chunk = since_id
             for row in chunk:
+                # OR IGNORE (not plain INSERT): a chunk can partially commit on
+                # Turso's side and then the HTTP response never arrive (seen live -
+                # requests.exceptions.ConnectionError mid-batch) - the marker then
+                # never advances for that chunk, so the NEXT sync() attempt re-sends
+                # the exact same rows and would otherwise hard-fail on
+                # UNIQUE constraint failed: verdicts.id instead of just re-confirming
+                # what's already there and moving the marker forward.
                 statements.append(
-                    (f"INSERT INTO verdicts ({cols}) VALUES ({v_placeholders})", list(row))
+                    (f"INSERT OR IGNORE INTO verdicts ({cols}) VALUES ({v_placeholders})", list(row))
                 )
                 id_ = row[0]
                 ft = ft_rows[id_]
                 statements.append((
-                    "INSERT INTO verdicts_fts(rowid, parties, judge, court, case_number, "
+                    "INSERT OR IGNORE INTO verdicts_fts(rowid, parties, judge, court, case_number, "
                     "matter, decision_type, full_text) VALUES (?,?,?,?,?,?,?,?)",
                     [id_, ft[1], ft[2], ft[3], ft[4], ft[5], ft[6], texts.get(id_, "")],
                 ))
