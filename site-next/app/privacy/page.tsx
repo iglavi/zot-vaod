@@ -71,16 +71,16 @@ export default function PrivacyPage() {
             <p>אנחנו נוקטים אמצעים סבירים להגנה על המידע, אבל שום שירות מקוון אינו חסין לחלוטין.</p>
           </div>
 
-          <p className="text-xs text-muted pt-4 border-t border-border">
-            אם נעדכן את המדיניות, נציין כאן את תאריך העדכון. עודכן לאחרונה: 6 באוגוסט 2026.
-          </p>
-          <p className="text-xs text-muted">
+          <p>
             יצירת קשר:{" "}
             <a href="mailto:support@giluy-naot.org.il" className="text-green-700 underline hover:text-green-900">
               support@giluy-naot.org.il
             </a>
           </p>
-          <p className="text-xs text-muted">תשתדלו לא לתבוע אותי.</p>
+
+          <p className="text-xs text-muted pt-4 border-t border-border">
+            עודכן לאחרונה: 6 באוגוסט 2026.
+          </p>
         </div>
       </main>
       <Footer />

@@ -8,7 +8,7 @@ export default function HomePage() {
     <>
       <Header active="/" />
       <main id="main-content">
-        <section className="container-page pt-12 pb-10 text-center">
+        <section className="container-page pt-12 pb-4 text-center">
           <h1 className="font-display text-4xl md:text-6xl text-green-900 leading-[1.15] max-w-4xl mx-auto">
             פסקי הדין של ישראל, בחינם
           </h1>

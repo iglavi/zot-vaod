@@ -6,7 +6,6 @@ const NAV = [
   { href: "/ai", label: "חיפוש חכם" },
   { href: "/search", label: "חיפוש מובנה" },
   { href: "/about", label: "אודות" },
-  { href: "/accessibility", label: "הצהרת נגישות" },
 ];
 
 export function Header({ active = "/" }: { active?: string }) {

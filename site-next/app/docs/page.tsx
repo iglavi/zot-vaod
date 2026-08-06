@@ -127,7 +127,7 @@ export default function DocsPage() {
         <h2 className="text-xl font-semibold text-green-900 mt-8 mb-3">GET /api/coverage</h2>
         <Endpoint method="GET" path="/api/coverage">
           <p className="text-sm text-ink/80">
-            נתוני היקף המאגר (ראו גם עמוד <a href="/coverage" className="underline hover:text-green-900">שקיפות המאגר</a>).
+            נתוני היקף המאגר (ראו גם <a href="/about#coverage" className="underline hover:text-green-900">עמוד אודות</a>).
           </p>
           <Code>{`{
   "total": 3765568,

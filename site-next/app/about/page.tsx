@@ -1,13 +1,16 @@
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { CoverageStats } from "@/components/CoverageStats";
 
 export const metadata = { title: "אודות — גילוי נאות" };
 
 function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
   return (
-    <section id={id} className="container-page py-8 scroll-mt-24">
-      <h2 className="text-xl font-semibold text-green-900 mb-3">{title}</h2>
-      <div className="text-sm text-ink/80 leading-relaxed max-w-3xl space-y-3">{children}</div>
+    <section id={id} className="container-page py-5 scroll-mt-24">
+      <div className="max-w-3xl mx-auto">
+        <h2 className="text-xl font-semibold text-green-900 mb-3">{title}</h2>
+        <div className="text-sm text-ink/80 leading-relaxed space-y-2">{children}</div>
+      </div>
     </section>
   );
 }
@@ -18,7 +21,7 @@ export default function AboutPage() {
       <Header active="/about" />
       <main id="main-content">
         <div className="container-page pt-16 pb-4">
-          <h1 className="font-display text-3xl text-green-900 mb-2">אודות גילוי נאות</h1>
+          <h1 className="font-display text-3xl text-green-900 mb-2 max-w-3xl mx-auto">אודות גילוי נאות</h1>
         </div>
 
         <Section title="מה זה">
@@ -56,50 +59,6 @@ export default function AboutPage() {
             לגורם מסחרי.
           </p>
           <p>האתר הזה הוא ניסיון לעשות את זה בפועל.</p>
-
-          <div className="bg-green-700 text-white rounded-xl2 py-12 px-8 text-center mt-6">
-            <div className="font-display text-4xl mb-4">4.5 מיליון ש&quot;ח</div>
-            <p className="max-w-xl mx-auto text-green-50 text-sm leading-relaxed">
-              הרשות השופטת שילמה בעצמה בשנים 2016–2019 לספק אחד כ-1.1 מיליון
-              ש&quot;ח בממוצע לשנה, ולספק שני כ-200,000 ש&quot;ח בממוצע לשנה, עבור
-              שירותי &quot;רכישת רישיונות גישה ומתן שירותי אחזור מידע במאגרי
-              מידע משפטיים למשתמשי מערכת בתי המשפט&quot; - כלומר בארבע שנים
-              שילמה הרשות השופטת מיליוני שקלים לגורמים מסחריים עבור גישה
-              למידע שמגיע מהמערכות שלה עצמה.
-            </p>
-            <p className="text-xs text-green-200 mt-3">
-              מקור: דו&quot;ח מבקר המדינה, 2022 (עמ&apos; 831)
-            </p>
-          </div>
-        </Section>
-
-        <Section title="מאיפה המידע">
-          <p>
-            המסמכים נאספים מהפרסומים באתר הרשות השופטת (נט המשפט) ובאתר
-            בית המשפט העליון:
-          </p>
-          <ul className="list-disc pr-5 space-y-1">
-            <li>
-              <a
-                href="https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-green-700 underline hover:text-green-900"
-              >
-                אתר נט המשפט
-              </a>
-            </li>
-            <li>
-              <a
-                href="https://supreme.court.gov.il/Pages/HomePage.aspx"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-green-700 underline hover:text-green-900"
-              >
-                אתר בית המשפט העליון
-              </a>
-            </li>
-          </ul>
         </Section>
 
         <Section title="חיפוש ה-AI">
@@ -111,37 +70,48 @@ export default function AboutPage() {
             כל תשובה מלווה ברשימת המקורות שעליהם היא מבוססת, כדי שתוכלו
             לבדוק אותם בעצמכם.
           </p>
-        </Section>
-
-        <Section title="מי עומד מאחורי זה">
           <p>
-            אני עורך דין ודוקטורנט למשפטים. זה פרויקט אזרחי ללא מטרות
-            רווח, בלי מימון ממשלתי ובלי מימון מסחרי. הוקם ומתוחזק
-            בהתנדבות, פשוט כי המצב היום לא צודק, ויש AI שמאפשר לעשות הרבה
-            דברים שפעם היו הרבה יותר מורכבים.
+            המודל לא אמור להביא מידע מחוץ לפסקי הדין שאותרו, אבל כמו כל
+            מודל שפה הוא עלול לטעות - תמיד בדקו את המקור.
           </p>
         </Section>
 
         <Section id="coverage" title="מה יש במאגר, ומה אין בו">
-          <p>מאגר משפטי שלא אומר לכם מה חסר בו הוא מאגר שאי אפשר לסמוך עליו. אז הנה, בגילוי נאות.</p>
           <p>
             <strong>מאיפה המידע מגיע:</strong> המידע מגיע מפרסומים של הרשות
-            השופטת. הושקעו שעות רבות באיתור והורדת כל המסמכים שבאתר, אבל
-            אפשר לומר בוודאות שישנם פסקי דין שלא מופיעים באתר - בגלל
-            מגבלות מובנות באתר נט המשפט, שפשוט לא מאפשר להגיע לכל פסקי
-            הדין הקיימים אם אתה לא יודע מראש מה מספר ההליך. אם אתם צריכים
-            כיסוי של 100%, אולי יש במאגרי המידע שבתשלום - מוזמנים לבדוק.
+            השופטת -{" "}
+            <a
+              href="https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-green-700 underline hover:text-green-900"
+            >
+              אתר נט המשפט
+            </a>{" "}
+            ו
+            <a
+              href="https://supreme.court.gov.il/Pages/HomePage.aspx"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-green-700 underline hover:text-green-900"
+            >
+              אתר בית המשפט העליון
+            </a>
+            . הושקעו שעות רבות באיתור והורדת כל המסמכים שבאתר, אבל אפשר
+            לומר בוודאות שישנם פסקי דין שלא מופיעים באתר - בגלל מגבלות
+            מובנות באתר נט המשפט, שפשוט לא מאפשר להגיע לכל פסקי הדין
+            הקיימים אם אתה לא יודע מראש מה מספר ההליך. אם אתם צריכים כיסוי
+            של 100%, אולי יש במאגרי המידע שבתשלום - מוזמנים לבדוק.
           </p>
           <p>
             <strong>מה יש כאן:</strong> פסקי דין, גזרי דין והכרעות דין
             מכל הערכאות.
           </p>
-          <p>
-            <a href="/coverage" className="text-green-700 underline hover:text-green-900">
-              נתוני כיסוי מלאים ומתעדכנים, כולל פילוח לפי בית משפט ולפי שנה ←
-            </a>
+          <p className="font-medium text-green-900 pt-2">
+            נתוני כיסוי מלאים ומתעדכנים, כולל פילוח לפי בית משפט ולפי שנה:
           </p>
-          <p>
+          <CoverageStats />
+          <p className="pt-2">
             <strong>מה אין כאן:</strong>
           </p>
           <ul className="list-disc pr-5 space-y-1">
@@ -158,14 +128,6 @@ export default function AboutPage() {
             ייתכן שהיא קיימת ולא הגיעה אלינו, או שהיא קיימת והחיפוש לא
             מצא אותה.
           </p>
-          <p>
-            זה לא ייעוץ משפטי ולא תחליף לעורך דין. אנחנו מנגישים מסמכים
-            כפי שהגיעו אלינו מהרשות השופטת. מנוע ה-AI מנסח תשובות על בסיס
-            פסקי דין שאותרו במאגר, והוא עלול לטעות - הוא עשוי לסכם לא
-            במדויק, לפספס פסיקה רלוונטית, או להציג טענה של צד לתיק כאילו
-            הייתה קביעה של בית המשפט. לפני שאתם מסתמכים על משהו - פתחו את
-            פסק הדין המקורי ותקראו.
-          </p>
         </Section>
 
         <Section title="תקלות שאנחנו יודעים עליהן">
@@ -173,7 +135,7 @@ export default function AboutPage() {
           <ul className="list-disc pr-5 space-y-1">
             <li>בחלק מהרשומות שדה שמות הצדדים ריק או מכיל ערך שגוי.</li>
             <li>תאריכים מוצגים במספר פורמטים שונים, ולפעמים שגויים.</li>
-            <li>ספירת התוצאות בחיפוש מוגבלת ל-5,000. כשמוצג המספר הזה, המשמעות היא &quot;5,000 ומעלה&quot;.</li>
+            <li>ספירת התוצאות בחיפוש מוגבלת ל-5,000.</li>
           </ul>
           <p>
             אנחנו עוקבים באופן צמוד אחר החלטות שקובעות צו איסור פרסום או
@@ -183,24 +145,16 @@ export default function AboutPage() {
           </p>
         </Section>
 
-        <Section title="מצאתם טעות?">
-          <p>זה עוזר לנו יותר מכל דבר אחר. שלחו לנו את מספר התיק ומה לא נכון:</p>
-          <p>
-            <a href="mailto:support@giluy-naot.org.il" className="text-green-700 underline hover:text-green-900">
-              support@giluy-naot.org.il
-            </a>
-          </p>
-          <p>אנחנו מתקנים ומעדכנים.</p>
-          <p>אתם סטודנטים, חוקרים, עיתונאים או מפתחים ורוצים גישה לנתונים הגולמיים? דברו איתנו.</p>
-        </Section>
-
         <Section title="איך אפשר לעזור">
           <p>אם מצאתם טעות במאגר - נשמח שתפנו ותעדכנו.</p>
           <p>
             תחזוק האתר כרוך בעלויות, ואם יעמוד לרשותנו תקציב נוסף ניתן
-            יהיה לשפר ולשכלל את האתר.{" "}
-            <strong>נשמח לקבל חסות, תמיכה או סיוע - צרו קשר.</strong>
+            יהיה לשפר ולשכלל את האתר.
           </p>
+          <p className="font-semibold text-green-900">
+            נשמח לקבל חסות, תמיכה או סיוע - צרו קשר.
+          </p>
+          <p>אתם סטודנטים, חוקרים, עיתונאים או מפתחים ורוצים גישה לנתונים הגולמיים? דברו איתנו.</p>
           <p>אם אתם רוצים להציע שיתוף פעולה או שיש לכם רעיון מעניין - גם תפנו.</p>
           <p>
             יצירת קשר:{" "}
@@ -208,7 +162,16 @@ export default function AboutPage() {
               support@giluy-naot.org.il
             </a>
           </p>
-          <p className="text-muted text-xs pt-2">ועוד משהו - בבקשה אל תתבעו אותי.</p>
+        </Section>
+
+        <Section title="מי עומד מאחורי זה">
+          <p>
+            אני עורך דין ודוקטורנט למשפטים. זה פרויקט אזרחי ללא מטרות
+            רווח, בלי מימון ממשלתי ובלי מימון מסחרי. הוקם ומתוחזק
+            בהתנדבות, פשוט כי המצב היום לא צודק, ויש AI שמאפשר לעשות הרבה
+            דברים שפעם היו הרבה יותר מורכבים.
+          </p>
+          <p className="text-muted text-xs pt-2">ועוד משהו - תשתדלו לא לתבוע אותי, אם יש בעיה כלשהי תפנו קודם.</p>
         </Section>
       </main>
       <Footer />

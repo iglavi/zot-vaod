@@ -26,8 +26,8 @@ export function Wordmark({ className = "" }: { className?: string }) {
 export function Logo({ iconSize = 36 }: { iconSize?: number }) {
   return (
     <a href="/" className="flex items-center gap-2">
-      <Wordmark />
       <LogoIcon size={iconSize} />
+      <Wordmark />
     </a>
   );
 }

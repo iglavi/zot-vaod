@@ -110,8 +110,8 @@ export default function TermsPage() {
             <h2 className="text-lg font-semibold text-green-900 mb-2">דין וסמכות שיפוט</h2>
             <p>
               על תנאים אלה יחולו דיני מדינת ישראל, וסמכות השיפוט נתונה
-              לבתי המשפט המוסמכים בישראל. אבל כאמור, לא יהיה בזה צורך כי
-              אתם בוודאי לא תתבעו אותי.
+              לבתי המשפט המוסמכים בישראל. אבל אני מקווה שלא יהיה בזה צורך
+              כי אתם תשתדלו שלא לתבוע אותי, ואם יש בעיה תפנו קודם.
             </p>
             <p className="mt-2 text-xs text-muted leading-relaxed">
               אגב, אם בכל זאת אתם מתכוונים לתבוע אותי, קראו בבקשה קודם
@@ -130,7 +130,7 @@ export default function TermsPage() {
           </div>
 
           <p className="text-xs text-muted pt-4 border-t border-border">
-            אם נעדכן את התנאים נציין כאן את תאריך העדכון. עודכן לאחרונה: 6 באוגוסט 2026.
+            עודכן לאחרונה: 6 באוגוסט 2026.
           </p>
           <p className="text-xs text-muted">
             יצירת קשר:{" "}
