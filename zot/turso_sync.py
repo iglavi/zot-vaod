@@ -118,18 +118,32 @@ def _run_batch(statements: list[tuple[str, list]]) -> None:
     reqs.append({"type": "execute", "stmt": {"sql": "COMMIT"}})
     reqs.append({"type": "close"})
 
-    resp = requests.post(
-        _http_url(),
-        headers={"Authorization": f"Bearer {config.TURSO_AUTH_TOKEN}",
-                 "Content-Type": "application/json"},
-        json={"requests": reqs},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    results = resp.json().get("results", [])
-    for r in results:
-        if r.get("type") == "error":
-            raise RuntimeError(f"Turso sync statement failed: {r['error']}")
+    # Turso's underlying SQLite engine can return SQLITE_BUSY ("database is
+    # locked") under concurrent writers (e.g. two sync callers racing, or a
+    # heavy batch from one still committing) - transient, so retry with
+    # backoff instead of failing the whole batch. Same class of fix as the
+    # local index.db lock handling in 65a0f07.
+    delay = 1.0
+    for attempt in range(6):
+        resp = requests.post(
+            _http_url(),
+            headers={"Authorization": f"Bearer {config.TURSO_AUTH_TOKEN}",
+                     "Content-Type": "application/json"},
+            json={"requests": reqs},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        errors = [r for r in results if r.get("type") == "error"]
+        if not errors:
+            return
+        busy = any("locked" in str(e.get("error", "")).lower()
+                    or (e.get("error") or {}).get("code") == "SQLITE_BUSY"
+                    for e in errors)
+        if not busy or attempt == 5:
+            raise RuntimeError(f"Turso sync statement failed: {errors[0]['error']}")
+        time.sleep(delay)
+        delay = min(delay * 2, 20)
 
 
 def delete_verdicts(rows: list[dict]) -> int:
