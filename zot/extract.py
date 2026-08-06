@@ -418,7 +418,27 @@ def _valid_iso_date(day: int, month: int, year: int) -> str:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
-def extract_decision_date(text: str) -> str:
+# תאריך-מתן לא יכול להיות עתידי (זה תאריך שבו ההחלטה *כבר* ניתנה) - ראו
+# Tikunim.txt T18: זוהה בפועל דפוס חוזר (במיוחד אצל שופטים מסוימים,
+# למשל יונתן אברהם) שבו התבנית המעוגנת ל'ניתן/ניתנה' תופסת בטעות תאריך
+# של דיון-עתידי שנקבע/נדחה באותו משפט ('ניתנה החלטה זו... הדיון נדחה
+# ליום X'), במקום תאריך המתן האמיתי (המופיע לפעמים בניסוח אחר לגמרי,
+# לא סמוך ל'ניתן/ניתנה', ולכן לא נתפס כלל על ידי התבניות המעוגנות).
+# יום סלאק אחד סביב "היום" מונע דחיית תאריך אמיתי שנופל בדיוק על גבול
+# אזור-זמן/שעת-ריצת-הסריקה.
+_FUTURE_SLACK_DAYS = 1
+
+
+def _is_future(iso_date: str, today: date) -> bool:
+    from datetime import timedelta
+    try:
+        y, m, d = (int(x) for x in iso_date.split("-"))
+    except ValueError:
+        return False
+    return date(y, m, d) > today + timedelta(days=_FUTURE_SLACK_DAYS)
+
+
+def extract_decision_date(text: str, today: date | None = None) -> str:
     """מחלץ את תאריך ההחלטה (הלועזי) ומחזיר ISO 'YYYY-MM-DD', או ''.
 
     מנסה קודם את כותרת "תאריך מתן פסק הדין/ההחלטה" המפורשת (_DATE_HEADER_RE)
@@ -434,12 +454,18 @@ def extract_decision_date(text: str) -> str:
     ה-longform-matches) ולא לפי סדר-הופעה אמיתי בטקסט, העיגון-השווא
     המוקדם "מנצח" למרות שהוא לא באמת אחרון (ראו בדיקה בשיחה - id=1150390).
     רק אם אף עיגון לא נמצא בכלל - נופל בחזרה לחיפוש גורף בטקסט (_DATE_RE,
-    לא מעוגן, עלול לתפוס כותרת/הפניה-לחוק לא-קשורה, ראו התיעוד שם)."""
+    לא מעוגן, עלול לתפוס כותרת/הפניה-לחוק לא-קשורה, ראו התיעוד שם).
+
+    בכל שלב, מועמד עם תאריך עתידי (ראו _is_future) נפסל ומדלגים לבא
+    אחריו באותו שלב (לא נכשל מיד לשלב הבא) - תאריך-מתן לעולם לא יכול
+    להיות עתידי, אז מועמד כזה הוא כמעט תמיד תאריך-דיון-עתידי שנתפס
+    בטעות, לא תאריך המתן האמיתי."""
     if not text:
         return ""
+    today = today or date.today()
     for _pos, day, month, year in _iter_signoff_dates(_DATE_HEADER_RE, text):
         result = _valid_iso_date(day, month, year)
-        if result:
+        if result and not _is_future(result, today):
             return result
     candidates = sorted(
         _iter_signoff_dates(_DATE_SIGNOFF_RE, text)
@@ -448,11 +474,11 @@ def extract_decision_date(text: str) -> str:
     )
     for _pos, day, month, year in candidates:
         result = _valid_iso_date(day, month, year)
-        if result:
+        if result and not _is_future(result, today):
             return result
     for m in reversed(list(_DATE_RE.finditer(text))):
         result = _valid_iso_date(int(m.group(1)), HEB_MONTHS[m.group(2)], int(m.group(3)))
-        if result:
+        if result and not _is_future(result, today):
             return result
     return ""
 
@@ -487,8 +513,12 @@ _HEAD_RE = re.compile(
     r"(?:(?P<num>\d{2,6}[-/]\d{1,2}(?:-\d{2,4})?)"
     r"|(?P<year_first>\d{2})(?:\s+/\s*|\s*/\s+)(?P<num_rev>\d{1,6}))"
 )
-# סימני-עצירה אמינים תמיד (פותחים בפועל את שורת השופט/ת או 'תיק חיצוני').
-_PARTIES_STOP = re.compile(r"[לב]פנ[יי]|תיק\s+חיצוני")
+# סימני-עצירה אמינים תמיד (פותחים בפועל את שורת השופט/ת, 'תיק חיצוני',
+# או תווית 'מספר בקשה:N' שמסמכי החלטות-ביניים מדביקים לפעמים ישירות
+# אחרי שם הצד השני בלי מפריד - ראו Tikunim.txt T17 (למשל "...ואח' מספר
+# בקשה:1" שהצטרף בטעות לתוך parties, בפועל נמצאו 15+ רשומות עם התבנית
+# הזו במדגם חלקי בלבד).
+_PARTIES_STOP = re.compile(r"[לב]פנ[יי]|תיק\s+חיצוני|מספר\s+בקשה")
 # 'כבוד'/"כב'" כשלעצמו הוא סימון-עצירה חלש יותר: ארגונים בשם 'דרך כבוד'
 # וכד' הכילו את המילה בשם הצד עצמו, וגרמו לקטיעה שגויה של השם. משמש רק
 # כגיבוי אם לא נמצא 'לפני/בפני' תקין באותה שורה כלל.
@@ -639,7 +669,7 @@ _REP_COUNSEL_TRAIL_RE = re.compile(
 )
 _PARTY_NAME_STOP_RE = re.compile(
     r"\n|\d+[.)]|" + _PLAINTIFF_LABEL_RE.pattern + "|" + _DEFENDANT_LABEL_RE.pattern +
-    r"|\bנגד\b|" + _REP_COUNSEL_RE.pattern
+    r"|\bנגד\b|" + _REP_COUNSEL_RE.pattern + r"|מספר\s+בקשה"
 )
 
 

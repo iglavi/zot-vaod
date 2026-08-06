@@ -175,6 +175,50 @@ def _fts_phrase_for_column(text: str, column: str) -> str:
     return f'{column}:"{quoted}"'
 
 
+# אותיות-שימוש עבריות שנדבקות כתחילית למילה (ו/ה/ב/ל/מ/ש/כ, וגם צירופי
+# שתי-אותיות נפוצים) - ראו Tikunim.txt D4: חיפוש "רשלנות" חייב למצוא גם
+# "ברשלנות"/"וברשלנותו"/"הרשלנות". FTS5 tokenization לא מפרקת תחיליות
+# כאלה (הן לא מפרידי-מילים), אז "רשלנות" ו"ברשלנות" הם טוקנים שונים
+# לגמרי מבחינתו - הפתרון כאן הוא להוסיף גרסאות-מתוייגות של כל מילת-חיפוש
+# כאלטרנטיבות ב-OR, לא לשנות את האינדקס עצמו (שינוי כזה היה מחייב בניית-
+# אינדקס מחדש על מאגר של מיליוני מסמכים - סיכון גדול בהרבה מהתועלת כאן).
+_HEB_PREFIXES = ("ו", "ה", "ב", "ל", "מ", "ש", "כ",
+                 "וה", "ול", "ומ", "ושב", "שב", "כש", "מה")
+
+
+def _spelling_variants(token: str) -> set[str]:
+    """גרסאות-איות חלופיות נפוצות ("מלא"/"חסר") לאותה מילה - ראו
+    Tikunim.txt D5: "תאוריית"/"תיאורית" (תאוריה/תיאוריה - שתי הכתיבות
+    התקניות למילה השאולה "תאוריה") ו"ציפיה"/"ציפייה" (יו"ד כפולה/בודדת
+    לפני ה"א סופית - תופעה שכיחה מאוד בעברית). לא ניסיון למצות את כל
+    חוקי הכתיב המלא/חסר (משימת ניתוח-לשוני מלאה, לא הנדסת-חיפוש נקודתית) -
+    רק שני התבניות הנפוצות והבטוחות ביותר להוספה כאלטרנטיבות בלי לפגוע
+    בדיוק החיפוש (רק מוסיפות אפשרויות-OR, לא מגבילות שום דבר קיים)."""
+    variants = {token}
+    if token.endswith("ייה") and len(token) > 3:
+        variants.add(token[:-3] + "יה")
+    elif token.endswith("יה") and len(token) > 2:
+        variants.add(token[:-2] + "ייה")
+    if token.startswith("תיא") and len(token) > 3:
+        variants.add("תא" + token[3:])
+    elif token.startswith("תא") and len(token) > 2:
+        variants.add("תיא" + token[2:])
+    return variants
+
+
+def _root_match_variants(token: str) -> set[str]:
+    """מרחיב מילת-חיפוש בודדת (D4+D5 ביחד) לכל צירופי תחילית-שימוש
+    ואיות-חלופי, לשימוש במצב 'התאמה חלקית' (any) בלבד - ראו _fts_query.
+    לא מיושם על מצב 'exact' (ביטוי מדויק) כדי לא לפגוע בדיוק שהמשתמש/ת
+    ביקש/ה בכוונה שם."""
+    bases = _spelling_variants(token)
+    out = set(bases)
+    for base in bases:
+        for prefix in _HEB_PREFIXES:
+            out.add(prefix + base)
+    return out
+
+
 def _fts_query(text: str, mode: str = "any") -> str:
     """הופך טקסט חופשי לביטוי FTS5 בטוח, לפי מצב ההתאמה שנבחר."""
     tokens = [t for t in _TOKEN_RE.findall(text or "") if len(t) >= 2]
@@ -187,7 +231,14 @@ def _fts_query(text: str, mode: str = "any") -> str:
             return f'"{tokens[0]}"'
         quoted = " ".join(f'"{t}"' for t in tokens)
         return f"NEAR({quoted}, 6)"
-    return " OR ".join(f'"{t}"' for t in tokens)
+    all_variants: list[str] = []
+    seen: set[str] = set()
+    for t in tokens:
+        for v in _root_match_variants(t):
+            if v not in seen:
+                seen.add(v)
+                all_variants.append(v)
+    return " OR ".join(f'"{t}"' for t in all_variants)
 
 
 # מיון 'רלוונטיות' (ברירת המחדל): פסק דין/גזר דין/הכרעת דין (תוכן מהותי)
@@ -711,6 +762,20 @@ _COVERAGE_YEAR_BUCKETS = [
 ]
 
 
+def _earliest_year(db_path: Path | None = None) -> int | None:
+    """שנת פסק-הדין הישן ביותר במאגר (עם מסמך מלא), להצגה בדף הבית -
+    ראו Tikunim.txt D3 ("[מ-1997] ועד היום"). מסונן ל->=1900 כדי להתעלם
+    משגיאות-הקלדה בתאריך שנתפסות לפעמים כשנה בת 2-3 ספרות."""
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT MIN(substr(COALESCE(NULLIF(decision_date,''), filed_date), 1, 4)) "
+        "FROM verdicts WHERE has_document = 1 AND "
+        "COALESCE(NULLIF(decision_date,''), filed_date) >= '1900-01-01'"
+    ).fetchone()
+    conn.close()
+    return int(row[0]) if row and row[0] else None
+
+
 def coverage_stats(db_path: Path | None = None) -> dict:
     base = stats(db_path)
     by_year = [
@@ -725,6 +790,7 @@ def coverage_stats(db_path: Path | None = None) -> dict:
         "by_year": by_year,
         "supreme": supreme,
         "general": general,
+        "earliest_year": _earliest_year(db_path),
     }
 
 
@@ -789,13 +855,20 @@ def retrieve_for_ai(*, fts_query: str = "", court_scope: str = "", court_names: 
     else:
         rows = []
 
-    # גיבוי: אם אין תוצאות טקסטואליות (או כש-fts_query ריק בכוונה, ראו
-    # למעלה), מחזירים לפי מיון-תאריך בטווח התאריכים. ל'הישן ביותר' חייבים
-    # לסנן רשומות בלי שום תאריך (COALESCE נותן '' — מחרוזת ריקה, שממוינת
-    # *ראשונה* ב-ASC לפני כל תאריך אמיתי) — אחרת 'הישן ביותר' מחזיר בטעות
-    # רשומות חסרות-תאריך במקום את פסק הדין הישן האמיתי. לא נדרש ב-DESC
-    # ('החדש ביותר'): שם מחרוזת ריקה ממילא נופלת לסוף המיון מעצמה.
-    if not rows:
+    # גיבוי כרונולוגי: רק כש-fts_query ריק *בכוונה* (שאלת-מטא גורפת בלי
+    # נושא, למשל "ההחלטה העדכנית ביותר במאגר") - זה המקרה שלשמו הגיבוי
+    # הזה נועד. כש-fts_query לא ריק אבל 0 תוצאות תואמות (למשל שאלה על
+    # מונח/דוקטרינה שלא קיימת בפועל במאגר) - *אסור* ליפול בחזרה למסמכים
+    # אקראיים-לפי-תאריך: זה בדיוק מה שגרם למקורות "מצוטטים" לא-קשורים
+    # בכלל להצג כשה-AI בעצמו אומר שהם לא רלוונטיים (ראו תיקונים.txt סעיף
+    # D3/D10) - עדיף להחזיר רשימה ריקה ושה-AI/ה-UI יגידו במפורש שלא נמצא
+    # דבר, מאשר להציג 20 פסקי דין עדכניים לגמרי לא-קשורים כ"מקורות".
+    # ל'הישן ביותר' חייבים לסנן רשומות בלי שום תאריך (COALESCE נותן '' —
+    # מחרוזת ריקה, שממוינת *ראשונה* ב-ASC לפני כל תאריך אמיתי) — אחרת
+    # 'הישן ביותר' מחזיר בטעות רשומות חסרות-תאריך במקום את פסק הדין הישן
+    # האמיתי. לא נדרש ב-DESC ('החדש ביותר'): שם מחרוזת ריקה ממילא נופלת
+    # לסוף המיון מעצמה.
+    if not fts_query and not rows:
         oldest = sort == "oldest"
         direction = "ASC" if oldest else "DESC"
         date_where = list(where)

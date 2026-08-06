@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ThinkingSteps, STEP_LABELS } from "@/components/ThinkingSteps";
 import { SourceCard } from "@/components/VerdictCard";
+import { EXAMPLE_QUESTIONS } from "@/lib/exampleQuestions";
 
 type Source = {
   id: number; case_number: string; parties: string; court: string;
@@ -21,7 +22,11 @@ type Conversation = { id: string; title: string; turns: Turn[]; updatedAt: numbe
 
 const HISTORY_KEY = "giluy-naot-ai-history";
 const MAX_SAVED_CONVERSATIONS = 20;
-const CITIZEN_MODE_KEY = "giluy-naot-citizen-mode";
+const SIDEBAR_OPEN_KEY = "giluy-naot-ai-sidebar-open";
+const SIDEBAR_WIDTH_KEY = "giluy-naot-ai-sidebar-width";
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_DEFAULT_WIDTH = 260;
 
 // localStorage בלבד (לא שרת) - אין מערכת חשבונות/התחברות באתר הזה, אז
 // זו הדרך היחידה כרגע לשמר היסטוריית שיחות בין טעינות-דף בלי לבנות
@@ -102,33 +107,27 @@ function renderAnswerWithFormatting(text: string, sources: Source[] | undefined,
   });
 }
 
+const ANSWER_DISCLAIMER =
+  "התשובה נוסחה אוטומטית על בסיס פסקי הדין שלמעלה. היא עלולה לסכם לא " +
+  "במדויק, לפספס פסיקה, או להציג טענה של צד לתיק כאילו הייתה קביעה של " +
+  "בית המשפט. פתחו את פסק הדין ובדקו לפני שאתם מסתמכים.";
+
+const TRUNCATED_MESSAGE = "התשובה נקטעה באמצע. נסו שוב - השאלה שלכם נשמרה.";
+
 export function AiChat() {
   const params = useSearchParams();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [step, setStep] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [history, setHistoryList] = useState<Conversation[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  // F-13: "הסבר לי כאזרח" - נשמר ב-localStorage כדי שהבחירה תישאר בין
-  // ביקורים (כמו היסטוריית השיחות) - לא קשור לשיחה ספציפית אלא להעדפת
-  // המשתמש/ת הכללית.
-  const [citizenMode, setCitizenMode] = useState(false);
+  const [failedQuestion, setFailedQuestion] = useState<string | null>(null);
   const startedRef = useRef(false);
   const stepRef = useRef<HTMLDivElement>(null);
   const conversationIdRef = useRef<string>("");
-
-  function toggleCitizenMode() {
-    setCitizenMode((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(CITIZEN_MODE_KEY, next ? "1" : "0");
-      } catch {
-        // פרטי/quota - לא קריטי, פשוט לא יישמר לפעם הבאה
-      }
-      return next;
-    });
-  }
+  const resizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   async function copyAnswer(text: string, index: number) {
     try {
@@ -146,9 +145,12 @@ export function AiChat() {
 
   useEffect(() => {
     try {
-      setCitizenMode(localStorage.getItem(CITIZEN_MODE_KEY) === "1");
+      const savedOpen = localStorage.getItem(SIDEBAR_OPEN_KEY);
+      if (savedOpen !== null) setSidebarOpen(savedOpen === "1");
+      const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+      if (savedWidth) setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, savedWidth)));
     } catch {
-      // פרטי/quota - משאירים ברירת מחדל (כבוי)
+      // פרטי/quota - משאירים ברירת מחדל
     }
     setHistoryList(loadConversations());
     const q = params.get("q");
@@ -159,9 +161,41 @@ export function AiChat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function toggleSidebar() {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(SIDEBAR_OPEN_KEY, next ? "1" : "0"); } catch { /* לא קריטי */ }
+      return next;
+    });
+  }
+
+  // גרירת הגבול השמאלי של עמודת ההיסטוריה (מימין, ב-RTL) לשינוי רוחבה -
+  // ראו Tikunim.txt סעיף 12 ("כמו אפשרות להזיז עמודה בטבלה ב-office").
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    resizingRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    window.addEventListener("mousemove", onResizeMove);
+    window.addEventListener("mouseup", onResizeEnd);
+  }
+  function onResizeMove(e: MouseEvent) {
+    const r = resizingRef.current;
+    if (!r) return;
+    // ב-RTL העמודה על הימין - גרירה שמאלה (clientX קטן יותר) צריכה להרחיב.
+    const delta = r.startX - e.clientX;
+    const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, r.startWidth + delta));
+    setSidebarWidth(next);
+  }
+  function onResizeEnd() {
+    resizingRef.current = null;
+    window.removeEventListener("mousemove", onResizeMove);
+    window.removeEventListener("mouseup", onResizeEnd);
+    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)); } catch { /* לא קריטי */ }
+  }
+
   // שומר את השיחה הנוכחית ל-localStorage בכל שינוי בתורות - יוצר רשומה
   // חדשה בהודעה הראשונה (עם כותרת = תחילת השאלה), מעדכן אותה בכל תור
-  // נוסף. לא שומר שיחה ריקה.
+  // נוסף. לא שומר שיחה ריקה. שומר את התורות *במלואן* (כולל טקסט התשובה,
+  // לא רק השאלה) - ראו openConversation/היסטוריה למטה.
   useEffect(() => {
     if (turns.length === 0) return;
     if (!conversationIdRef.current) {
@@ -183,12 +217,14 @@ export function AiChat() {
   function startNewConversation() {
     conversationIdRef.current = "";
     setTurns([]);
+    setFailedQuestion(null);
     startedRef.current = true;
   }
 
   function openConversation(c: Conversation) {
     conversationIdRef.current = c.id;
     setTurns(c.turns);
+    setFailedQuestion(null);
     startedRef.current = true;
   }
 
@@ -203,6 +239,7 @@ export function AiChat() {
 
   async function send(question: string) {
     if (!question.trim() || step !== null) return; // מונע שליחה כפולה בזמן ששאלה קודמת עוד בתהליך
+    setFailedQuestion(null);
     const history = turns.map((t) => ({ role: t.role, content: t.text }));
     setTurns((t) => [...t, { role: "user", text: question }]);
     setInput("");
@@ -213,15 +250,17 @@ export function AiChat() {
       res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history, citizen_mode: citizenMode }),
+        body: JSON.stringify({ question, history }),
       });
     } catch {
       setTurns((t) => [...t, { role: "assistant", text: "שגיאת תקשורת - נסו שוב." }]);
+      setFailedQuestion(question);
       setStep(null);
       return;
     }
     if (!res.ok || !res.body) {
       setTurns((t) => [...t, { role: "assistant", text: "אירעה שגיאה בשרת. נסו שוב בעוד רגע." }]);
+      setFailedQuestion(question);
       setStep(null);
       return;
     }
@@ -301,11 +340,12 @@ export function AiChat() {
     // ההזרמה נסגרה (חיבור נסגר, למשל timeout של פונקציית ה-serverless)
     // בלי אירוע "done"/"error" מפורש - בלעדי הטיפול הזה נשאר לנצח "מנסח
     // תשובה..." תקוע על המסך עם טקסט חלקי, אף שהחיבור כבר מת בפועל.
+    // השאלה המקורית נשמרת (failedQuestion) כדי לאפשר כפתור "נסו שוב"
+    // בלחיצה אחת, בלי להקליד אותה מחדש - ראו Tikunim.txt D12.
     if (!sawTerminalEvent) {
       setStep(null);
-      assistantText += assistantText
-        ? "\n\n⚠️ התשובה נקטעה (החיבור נסגר). נסו לשאול שוב."
-        : "⚠️ לא התקבלה תשובה (החיבור נסגר). נסו לשאול שוב.";
+      setFailedQuestion(question);
+      assistantText = assistantText ? `${assistantText}\n\n${TRUNCATED_MESSAGE}` : TRUNCATED_MESSAGE;
       setTurns((t) => {
         const copy = [...t];
         copy[copy.length - 1] = { ...copy[copy.length - 1], text: assistantText };
@@ -314,51 +354,95 @@ export function AiChat() {
     }
   }
 
+  const hasStarted = turns.length > 0;
+
+  function questionForm(sticky: boolean) {
+    return (
+      <form
+        onSubmit={(e) => { e.preventDefault(); send(input); }}
+        className={`card flex items-center gap-3 p-2 pr-3 ${sticky ? "mt-3 sticky bottom-6" : ""}`}
+      >
+        <label htmlFor="ai-question" className="sr-only">השאלה שלכם</label>
+        <input
+          id="ai-question"
+          value={input}
+          disabled={step !== null}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="כתבו את השאלה בשפה חופשית, בלי מונחים משפטיים ובלי מספר הליך"
+          className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-base py-2 disabled:opacity-60"
+        />
+        <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+          {step !== null ? "מעבד…" : "שאלו"}
+        </button>
+      </form>
+    );
+  }
+
   return (
     <>
       <Header active="/ai" />
       <div className="container-page pt-6">
         <button
-          onClick={() => setSidebarOpen((v) => !v)}
+          onClick={toggleSidebar}
           aria-expanded={sidebarOpen}
           aria-controls="chat-history"
+          aria-label={sidebarOpen ? "הסתרת היסטוריית שיחות" : "הצגת היסטוריית שיחות"}
           className="text-xs text-green-700 hover:text-green-900 flex items-center gap-1.5 mb-2 min-h-[44px]"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="4" width="18" height="16" rx="2" />
             <path d="M9 4v16" />
           </svg>
-          {sidebarOpen ? "הסתרת היסטוריית שיחות" : "הצגת היסטוריית שיחות"}
+          {sidebarOpen && <span>הסתרת היסטוריית שיחות</span>}
         </button>
       </div>
-      <div className={`container-page pb-8 grid gap-2 grid-cols-1 ${sidebarOpen ? "md:grid-cols-[260px_1fr]" : ""}`}>
-        <aside id="chat-history" className={sidebarOpen ? "pl-8 border-l border-border ml-2 hidden md:block" : "hidden"}>
-          <button className="btn-outline w-full mb-4" onClick={startNewConversation}>
-            שיחה חדשה +
-          </button>
-          {history.length === 0 ? (
-            <div className="text-xs text-muted">היסטוריית השיחות תופיע כאן.</div>
-          ) : (
-            <div className="space-y-1">
-              {history.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => openConversation(c)}
-                  className={`w-full text-right text-xs px-2 py-2 rounded-md truncate ${
-                    c.id === conversationIdRef.current
-                      ? "bg-green-100 text-green-800 font-medium"
-                      : "text-ink/70 hover:bg-cream"
-                  }`}
-                  title={c.title}
-                >
-                  {c.title || "שיחה"}
-                </button>
-              ))}
-            </div>
-          )}
-        </aside>
+      <div
+        className="container-page pb-8 grid gap-2 grid-cols-1"
+        style={sidebarOpen ? { gridTemplateColumns: `${sidebarWidth}px 1fr` } : undefined}
+      >
+        {sidebarOpen && (
+          <aside id="chat-history" className="relative pl-8 border-l border-border ml-2 hidden md:block">
+            <button className="btn-outline w-full mb-4" onClick={startNewConversation}>
+              שיחה חדשה +
+            </button>
+            {history.length === 0 ? (
+              <div className="text-xs text-muted">היסטוריית השיחות תופיע כאן.</div>
+            ) : (
+              <div className="space-y-1">
+                {history.map((c) => {
+                  const firstAnswer = c.turns.find((t) => t.role === "assistant")?.text ?? "";
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => openConversation(c)}
+                      className={`w-full text-right text-xs px-2 py-2 rounded-md truncate ${
+                        c.id === conversationIdRef.current
+                          ? "bg-green-100 text-green-800 font-medium"
+                          : "text-ink/70 hover:bg-cream"
+                      }`}
+                      title={c.title}
+                    >
+                      <div className="truncate">{c.title || "שיחה"}</div>
+                      {firstAnswer && (
+                        <div className="truncate text-[10px] text-ink/50 font-normal">{firstAnswer}</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* ידית גרירה לשינוי רוחב העמודה - ראו startResize למעלה */}
+            <div
+              onMouseDown={startResize}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="שינוי רוחב עמודת ההיסטוריה"
+              className="hidden md:block absolute top-0 bottom-0 left-0 w-2 -ml-1 cursor-col-resize hover:bg-green-100"
+            />
+          </aside>
+        )}
         <main id="main-content">
-          <h1 className="sr-only">חיפוש AI בפסקי דין</h1>
+          <h1 className="sr-only">חיפוש חכם בפסקי דין</h1>
           <p role="status" className="sr-only">
             {step
               ? STEP_LABELS[step] ?? step
@@ -366,97 +450,123 @@ export function AiChat() {
               ? "התקבלה תשובה"
               : ""}
           </p>
-          <div className="space-y-5 min-h-[50vh]">
-            {turns.length === 0 && (
-              <p className="text-muted text-sm">שאלו שאלה בשפה חופשית על פסקי הדין במאגר.</p>
-            )}
-            {turns.map((t, i) => (
-              <div key={i} className={t.role === "user" ? "flex justify-end" : ""}>
-                <div className={
-                  t.role === "user"
-                    ? "bg-green-700 text-white rounded-2xl px-5 py-3 max-w-xl text-sm"
-                    : "max-w-2xl"
-                }>
-                  {t.role === "assistant" && t.sources && t.sources.length > 0 && (
-                    <div className="card p-4 mb-3">
-                      <div className="text-xs font-medium text-green-800 mb-2">
-                        מקורות מצוטטים ({t.sources.length})
-                      </div>
-                      <div className="space-y-2">
-                        {t.sources.map((s) => (
-                          <SourceCard key={s.id} v={s} id={`source-${i}-${s.id}`} />
-                        ))}
+
+          {!hasStarted ? (
+            <div className="max-w-2xl mx-auto text-center pt-8 pb-4">
+              <h2 className="font-display text-2xl text-green-900 mb-6">חיפוש חכם בפסקי דין</h2>
+              {questionForm(false)}
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                {EXAMPLE_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => send(q)}
+                    className="text-xs border border-border rounded-full px-3 py-1.5 min-h-[44px] text-green-800 hover:border-green-700 hover:bg-green-100"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-5">
+                {turns.map((t, i) => {
+                  const isStreamingTurn = Boolean(step) && i === turns.length - 1;
+                  return (
+                    <div key={i} className={t.role === "user" ? "flex justify-end" : ""}>
+                      <div className={
+                        t.role === "user"
+                          ? "bg-green-700 text-white rounded-2xl px-5 py-3 max-w-xl text-sm"
+                          : "max-w-2xl"
+                      }>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                          {t.role === "assistant" ? renderAnswerWithFormatting(t.text, t.sources, i) : t.text}
+                        </p>
+
+                        {/* T2: המקורות מוצגים *מתחת* לתשובה, ורק אחרי שהיא הושלמה */}
+                        {t.role === "assistant" && !isStreamingTurn && t.sources && t.sources.length > 0 && (
+                          <div className="card p-4 mt-3">
+                            <div className="text-xs font-medium text-green-800 mb-2">
+                              פסקי הדין שעליהם מבוססת התשובה ({t.sources.length})
+                            </div>
+                            <div className="space-y-2">
+                              {t.sources.map((s) => (
+                                <SourceCard key={s.id} v={s} id={`source-${i}-${s.id}`} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {t.role === "assistant" && !isStreamingTurn && t.text && (!t.sources || t.sources.length === 0) && (
+                          <div className="text-xs text-muted mt-2">לא מצאנו פסקי דין רלוונטיים לשאלה הזו.</div>
+                        )}
+
+                        {t.role === "assistant" && !isStreamingTurn && t.text && (
+                          <>
+                            <p className="text-[11px] text-ink/50 mt-2 leading-relaxed">{ANSWER_DISCLAIMER}</p>
+                            <div className="mt-2 flex items-center gap-3 flex-wrap">
+                              <button
+                                onClick={() => copyAnswer(t.text, i)}
+                                className="text-xs text-ink/50 hover:text-green-800 flex items-center gap-1"
+                              >
+                                {copiedIndex === i ? "✓ הועתק" : "📋 העתקת התשובה"}
+                              </button>
+                              <a
+                                href={`mailto:support@giluy-naot.org.il?subject=${encodeURIComponent("דיווח על טעות בתוצאה")}`}
+                                className="text-xs text-ink/50 hover:text-green-800"
+                              >
+                                יש טעות בתוצאה הזו? דווחו לנו
+                              </a>
+                            </div>
+                          </>
+                        )}
+
+                        {i === turns.length - 1 && failedQuestion && !step && (
+                          <button
+                            onClick={() => send(failedQuestion)}
+                            className="btn-outline mt-3 text-sm"
+                          >
+                            נסו שוב
+                          </button>
+                        )}
+
+                        {t.role === "assistant" && t.suggestions && t.suggestions.length > 0 &&
+                          i === turns.length - 1 && !step && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {t.suggestions.map((q, qi) => (
+                              <button
+                                key={qi}
+                                onClick={() => send(q)}
+                                className="text-xs border border-border rounded-full px-3 py-1.5 min-h-[44px] text-green-800 hover:border-green-700 hover:bg-green-100"
+                              >
+                                {q}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  )}
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {t.role === "assistant" ? renderAnswerWithFormatting(t.text, t.sources, i) : t.text}
-                  </p>
-                  {t.role === "assistant" && t.text && !(step && i === turns.length - 1) && (
-                    <button
-                      onClick={() => copyAnswer(t.text, i)}
-                      className="mt-2 text-xs text-ink/50 hover:text-green-800 flex items-center gap-1"
-                    >
-                      {copiedIndex === i ? "✓ הועתק" : "📋 העתקת התשובה"}
-                    </button>
-                  )}
-                  {t.role === "assistant" && t.suggestions && t.suggestions.length > 0 &&
-                    i === turns.length - 1 && !step && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {t.suggestions.map((q, qi) => (
-                        <button
-                          key={qi}
-                          onClick={() => send(q)}
-                          className="text-xs border border-border rounded-full px-3 py-1.5 min-h-[44px] text-green-800 hover:border-green-700 hover:bg-green-100"
-                        >
-                          {q}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                  );
+                })}
+                {step && (
+                  <div ref={stepRef} className="scroll-mt-24">
+                    <ThinkingSteps
+                      step={step}
+                      labels={
+                        step === "answering" && !turns[turns.length - 1]?.text
+                          ? {
+                              ...STEP_LABELS,
+                              answering: `קורא ${turns[turns.length - 1]?.sources?.length ?? "את"} פסקי דין…`,
+                            }
+                          : STEP_LABELS
+                      }
+                    />
+                  </div>
+                )}
               </div>
-            ))}
-            {step && (
-              <div ref={stepRef} className="scroll-mt-24">
-                <ThinkingSteps step={step} />
-              </div>
-            )}
-          </div>
 
-          <div className="flex items-center justify-end mt-6">
-            <label className="flex items-center gap-2 text-xs text-ink/70 cursor-pointer select-none min-h-[44px]">
-              <span>הסבר לי כאזרח (ניסוח פשוט, בלי ז&apos;רגון משפטי)</span>
-              <span
-                role="switch"
-                aria-checked={citizenMode}
-                onClick={toggleCitizenMode}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCitizenMode(); } }}
-                tabIndex={0}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-green-500/40 ${citizenMode ? "bg-green-700" : "bg-border"}`}
-              >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${citizenMode ? "-translate-x-1" : "-translate-x-6"}`} />
-              </span>
-            </label>
-          </div>
-
-          <form
-            onSubmit={(e) => { e.preventDefault(); send(input); }}
-            className="card flex items-center gap-3 p-2 pr-3 mt-3 sticky bottom-6"
-          >
-            <button type="submit" disabled={step !== null} className="btn-primary shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step !== null ? "מעבד…" : "שאלו"}
-            </button>
-            <label htmlFor="ai-question" className="sr-only">השאלה שלכם</label>
-            <input
-              id="ai-question"
-              value={input}
-              disabled={step !== null}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="הקלידו שאלה משפטית בשפה חופשית... (לדוגמה: 'איך מוגדרת עילת הסבירות?')"
-              className="flex-1 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 rounded-md text-base py-2 disabled:opacity-60"
-            />
-          </form>
+              {questionForm(true)}
+            </>
+          )}
         </main>
       </div>
       <Footer />

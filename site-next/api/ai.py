@@ -1,9 +1,7 @@
 """נקודת קצה לחיפוש החכם (AI), עם הזרמת שלבי-חשיבה + תשובה בזמן אמת
 (Server-Sent Events) - עוטפת את zot.ai_search הקיים בלי לשנות אותו.
 
-גוף הבקשה (POST JSON): {"question": str, "history": [...], "citizen_mode":
-bool} - citizen_mode (F-13) מבקש ניסוח פשוט ופרקטי במקום ניסוח משפטי
-(ראו zot/ai_search.py: _SYSTEM_ANSWER_CITIZEN).
+גוף הבקשה (POST JSON): {"question": str, "history": [...]}.
 
 הגבלת קצב: עד 5 שאלות בשעה לכל כתובת IP (ראו _ai_rate_limit_message) -
 כל שאלה עולה כסף אמיתי (קריאה למודל עם הקשר של פסקי-דין מלאים), אז זו
@@ -122,14 +120,13 @@ def ai_endpoint():
     body = request.get_json(force=True, silent=True) or {}
     question = (body.get("question") or "").strip()
     history = body.get("history") or []
-    citizen_mode = bool(body.get("citizen_mode"))
 
     client_ip = _client_ip()
 
     def stream():
         start = time.monotonic()
         if not question:
-            yield _sse("error", {"message": "לא התקבלה שאלה."})
+            yield _sse("error", {"message": "כתבו שאלה כדי להתחיל."})
             return
         limit_message = _ai_rate_limit_message(client_ip)
         if limit_message:
@@ -163,7 +160,7 @@ def ai_endpoint():
 
         if not verdicts:
             yield _sse("sources", {"verdicts": []})
-            yield _sse("delta", {"text": "לא נמצאו פסקי דין רלוונטיים לשאלה זו במאגר."})
+            yield _sse("delta", {"text": "לא מצאנו במאגר פסקי דין שעונים על השאלה. נסו לנסח אותה אחרת, או חפשו ישירות במאגר."})
             yield _sse("done", {})
             return
 
@@ -177,7 +174,6 @@ def ai_endpoint():
                 court_scope=analysis.get("court_scope", ""),
                 court_type=analysis.get("court_type", ""),
                 history=history,
-                citizen_mode=citizen_mode,
             ):
                 answer_text += chunk
                 yield _sse("delta", {"text": chunk})

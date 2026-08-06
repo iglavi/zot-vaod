@@ -3,16 +3,20 @@ import { Logo } from "./Logo";
 
 const NAV = [
   { href: "/", label: "בית" },
-  { href: "/ai", label: "חיפוש AI" },
+  { href: "/ai", label: "חיפוש חכם" },
   { href: "/search", label: "חיפוש מובנה" },
   { href: "/about", label: "אודות" },
+  { href: "/accessibility", label: "הצהרת נגישות" },
 ];
 
 export function Header({ active = "/" }: { active?: string }) {
   return (
     <header className="border-b border-border bg-cream/95 backdrop-blur sticky top-0 z-30">
       <div className="container-page min-h-[76px] py-3 flex items-center justify-between flex-wrap gap-3">
-        <Logo iconSize={34} />
+        <div>
+          <Logo iconSize={34} />
+          <div className="text-[11px] font-normal text-muted mt-0.5">בהרצה</div>
+        </div>
         <nav className="flex items-center gap-1.5 sm:gap-2 text-sm flex-wrap">
           {NAV.map((item) => {
             const isActive = item.href === active;

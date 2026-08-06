@@ -50,6 +50,37 @@ function DocLinks({ v, size = "normal" }: { v: Verdict; size?: "normal" | "small
   );
 }
 
+/** שורת "יש טעות?" + "העתקת קישור" משותפת לתחתית כרטיסי תוצאה - ראו
+ * Tikunim.txt סעיפים 8/27 (T10/T29). shareParams: פרמטרי query שמזהים
+ * את התוצאה הזו לצורך קישור-שיתוף (בפועל: מספר תיק, שהוא הדרך הישימה
+ * היחידה כרגע לחזור לתוצאה ספציפית דרך חיפוש מובנה). */
+function ResultCardFooter({ v }: { v: Verdict }) {
+  const [copied, setCopied] = useState(false);
+  async function copyLink() {
+    try {
+      const url = `${window.location.origin}/search?case_number=${encodeURIComponent(v.case_number)}`;
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // דפדפן חוסם/HTTP לא מאובטח - לא קריטי, המשתמש יכול להעתיק מסרגל הכתובת
+    }
+  }
+  return (
+    <div className="mt-2 flex items-center gap-3 flex-wrap text-[11px] text-ink/50">
+      <button onClick={copyLink} className="hover:text-green-800">
+        {copied ? "✓ הקישור הועתק" : "🔗 העתקת קישור לתוצאה זו"}
+      </button>
+      <a
+        href={`mailto:support@giluy-naot.org.il?subject=${encodeURIComponent(`דיווח על טעות בתיק ${v.case_number}`)}`}
+        className="hover:text-green-800"
+      >
+        יש טעות בתוצאה הזו? דווחו לנו
+      </a>
+    </div>
+  );
+}
+
 /** כרטיס תוצאה לחיפוש המובנה: מספר הליך מעל שמות הצדדים, ליד סוג ההחלטה. */
 export function VerdictCard({ v }: { v: Verdict }) {
   return (
@@ -77,6 +108,7 @@ export function VerdictCard({ v }: { v: Verdict }) {
           dangerouslySetInnerHTML={{ __html: v.snippet }}
         />
       )}
+      <ResultCardFooter v={v} />
     </div>
   );
 }
@@ -111,6 +143,9 @@ export function CaseGroupCard({ items }: { items: Verdict[] }) {
       <h3 className="font-medium text-ink">{head.parties || "ללא שם צדדים"}</h3>
       <div className="text-xs text-muted mt-1 flex items-center gap-1 flex-wrap">
         <span>{head.court}</span>
+        {/* שם השופט/ת - חסר בעבר בתיבה המרכזית של תוצאות מקובצות, ראו Tikunim.txt T28 */}
+        {(head.judge || sorted.find((s) => s.judge)?.judge) && <span>·</span>}
+        <span>{head.judge || sorted.find((s) => s.judge)?.judge}</span>
       </div>
 
       <button
@@ -141,6 +176,7 @@ export function CaseGroupCard({ items }: { items: Verdict[] }) {
           )}
         </div>
       )}
+      <ResultCardFooter v={head} />
     </div>
   );
 }

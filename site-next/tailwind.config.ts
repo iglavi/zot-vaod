@@ -10,13 +10,16 @@ const config: Config = {
         ink: "#2B2B28",
         muted: "#6B665C",
         border: "#E4DED2",
+        // "green" is a legacy key name - value ramp is now built around the
+        // requested brand color #2F5F69 (700, the shade used for primary
+        // buttons/links/active nav) - see Tikunim.txt item 21.
         green: {
-          900: "#0C2626",
-          800: "#103636",
-          700: "#154545",
-          600: "#1C5D5D",
-          500: "#257979",
-          100: "#E0F5F5",
+          900: "#152B2F",
+          800: "#21434A",
+          700: "#2F5F69",
+          600: "#4E7780",
+          500: "#78979E",
+          100: "#EAEFF0",
         },
       },
       fontFamily: {

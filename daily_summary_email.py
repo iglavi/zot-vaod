@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 """שולח מייל סיכום יומי (18:30) עם שני חלקים:
   1. ההורדה היומית (fetch_daily.py + run_daily.bat): הצליחה? כמה החלטות
-     חדשות ירדו, הועלו ל-R2, ונכנסו לאינדקס.
+     חדשות ירדו, הועלו ל-R2, ונכנסו לאינדקס. מאז 6/8/2026 בוט ההורדה רץ
+     פעמיים ביום (07:00 ו-16:00, ראו GiluyNaot-Daily) - הסיכום כאן מצרף
+     את כל ריצות היום (לא רק את האחרונה), כדי שהמייל היחיד ב-18:30 ישקף
+     את שתיהן.
   2. בוט החיסיון (confidentiality_bot.py): כמה מיילים נבדקו היום וכמה
      הליכים/החלטות הוסרו.
 
@@ -28,6 +31,7 @@ DAILY_LOG = ROOT / "daily_log.txt"
 BOT_LOG = ROOT / "confidentiality_bot_log.txt"
 
 _SECTION_RE = re.compile(r"^==== .+ ====\s*$")
+_SECTION_DATE_RE = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
 _DOWNLOAD_SUMMARY_RE = re.compile(
     r"סיכום הורדה: (\d+) קבצים חדשים, (\d+) כבר קיימים, (\d+) שגיאות"
 )
@@ -49,14 +53,26 @@ _BOT_SUMMARY_RE = re.compile(
 )
 
 
-def _last_section(text: str) -> str:
-    """מחזיר את הקטע האחרון בלוג (מ-'====' האחרון ועד סוף הקובץ)."""
+def _all_sections(text: str) -> list[str]:
+    """מפצל את הלוג לכל הקטעים (בין שני '====' עוקבים), לא רק האחרון -
+    נדרש מאז שבוט ההורדה רץ פעמיים ביום (07:00 ו-16:00)."""
     lines = text.splitlines()
-    last_start = 0
-    for i, line in enumerate(lines):
-        if _SECTION_RE.match(line):
-            last_start = i
-    return "\n".join(lines[last_start:])
+    starts = [i for i, line in enumerate(lines) if _SECTION_RE.match(line)]
+    if not starts:
+        return []
+    bounds = starts + [len(lines)]
+    return ["\n".join(lines[bounds[i]:bounds[i + 1]]) for i in range(len(starts))]
+
+
+def _section_is_today(section: str) -> bool:
+    """קורא את התאריך מכותרת הקטע (למשל '==== Thu 08/06/2026  16:00:01.23
+    ====', בפורמט MM/DD/YYYY - כך ש-%date% של Windows כותב) ומשווה להיום."""
+    header = section.splitlines()[0] if section else ""
+    m = _SECTION_DATE_RE.search(header)
+    if not m:
+        return False
+    month, day, year = m.groups()
+    return f"{year}-{month}-{day}" == date.today().isoformat()
 
 
 def summarize_daily_download() -> str:
@@ -66,26 +82,63 @@ def summarize_daily_download() -> str:
     # daily_log.txt נכתב ע"י run_daily.bat דרך הפניית קונסולת Windows (>>),
     # שמשתמשת ב-cp1255 (עברית) ולא ב-UTF-8 — בניגוד לרוב קבצי הפרויקט.
     text = DAILY_LOG.read_text(encoding="cp1255", errors="replace")
-    section = _last_section(text)
+    sections = [s for s in _all_sections(text) if _section_is_today(s)]
 
-    dl_m = _DOWNLOAD_SUMMARY_RE.search(section)
-    r2_m = _R2_UPLOAD_RE.search(section)
-    idx_ok_m = _INDEX_UPLOAD_OK_RE.search(section)
-    idx_fail = bool(_INDEX_UPLOAD_FAIL_RE.search(section))
-
-    if not dl_m:
+    if not sections:
         return "לא נמצאה ריצת הורדה תקינה בלוג של היום (ייתכן שנכשלה לפני שהגיעה לסיכום)."
 
-    new_files, existing, dl_errors = (int(x) for x in dl_m.groups())
-    lines = [f"החלטות/מסמכים חדשים שירדו היום (בכל התיקיות שנבדקו): {new_files:,}."]
+    lines = [f"מספר ריצות הורדה שזוהו היום: {len(sections)}."]
+    new_files_total = dl_errors_total = 0
+    r2_new_total = r2_errors_total = 0
+    r2_seen = False
+    built_total = 0
+    idx_skipped_any = False
+    last_idx_ok_m = None
+    idx_fail_any = False
+    all_folder_hits: list[tuple[str, str]] = []
+    any_dl_match = False
 
-    # תיקיית התאריך האחרון (המספר הגבוה ביותר) שנבדקה בריצה היא "התיקייה
-    # החדשה של היום" — פרק הזמן שהיא צריכה כדי להתייצב הוא 1-2 ימים (ראו
-    # ההערה ב-fetch_daily.py), אז מציגים גם את התיקייה שלפניה כדי לראות
-    # אם היא עדיין גדלה או כבר יציבה.
-    folder_hits = _FOLDER_DONE_RE.findall(section)
-    if folder_hits:
-        folder_hits.sort(key=lambda x: x[0])
+    for section in sections:
+        dl_m = _DOWNLOAD_SUMMARY_RE.search(section)
+        r2_m = _R2_UPLOAD_RE.search(section)
+        idx_ok_m = _INDEX_UPLOAD_OK_RE.search(section)
+        if _INDEX_UPLOAD_FAIL_RE.search(section):
+            idx_fail_any = True
+        if _INDEX_SKIPPED_RE.search(section):
+            idx_skipped_any = True
+        built_m = _INDEX_BUILT_RE.search(section)
+        if built_m:
+            built_total += int(built_m.group(2))
+        if idx_ok_m:
+            last_idx_ok_m = idx_ok_m  # השורה האחרונה כרונולוגית "מנצחת" - מצב האינדקס הנוכחי
+        all_folder_hits.extend(_FOLDER_DONE_RE.findall(section))
+
+        if dl_m:
+            any_dl_match = True
+            new_files, _existing, dl_errors = (int(x) for x in dl_m.groups())
+            new_files_total += new_files
+            dl_errors_total += dl_errors
+        if r2_m:
+            r2_seen = True
+            r2_new, _r2_existing, r2_errors = (int(x) for x in r2_m.groups())
+            r2_new_total += r2_new
+            r2_errors_total += r2_errors
+
+    if not any_dl_match:
+        return "לא נמצאה ריצת הורדה תקינה בלוג של היום (ייתכן שנכשלה לפני שהגיעה לסיכום)."
+
+    lines.append(f"החלטות/מסמכים חדשים שירדו היום (סה\"כ כל הריצות, בכל התיקיות שנבדקו): {new_files_total:,}.")
+
+    # תיקיית התאריך האחרון (המספר הגבוה ביותר) שנבדקה היא "התיקייה החדשה
+    # של היום" — פרק הזמן שהיא צריכה כדי להתייצב הוא 1-2 ימים (ראו ההערה
+    # ב-fetch_daily.py), אז מציגים גם את התיקייה שלפניה כדי לראות אם היא
+    # עדיין גדלה או כבר יציבה. dict כדי לקחת את הספירה העדכנית ביותר לכל
+    # תיקייה (הריצה השנייה של היום עשויה לראות יותר פריטים מהראשונה).
+    if all_folder_hits:
+        latest_per_folder: dict[str, str] = {}
+        for folder_date, count in all_folder_hits:
+            latest_per_folder[folder_date] = count
+        folder_hits = sorted(latest_per_folder.items())
         newest_date, newest_count = folder_hits[-1]
         lines.append(f"התיקייה החדשה של היום ({newest_date}): {int(newest_count):,} פריטים.")
         if len(folder_hits) > 1:
@@ -95,33 +148,30 @@ def summarize_daily_download() -> str:
     else:
         lines.append("אזהרה: לא נמצאה בלוג תיקיית-תאריך שהושלמה היום.")
 
-    if dl_errors:
-        lines.append(f"אזהרה: {dl_errors} שגיאות בהורדה.")
+    if dl_errors_total:
+        lines.append(f"אזהרה: {dl_errors_total} שגיאות בהורדה.")
 
-    if r2_m:
-        r2_new, r2_existing, r2_errors = (int(x) for x in r2_m.groups())
-        lines.append(f"הועלו ל-R2: {r2_new} קבצים חדשים.")
-        if r2_errors:
-            lines.append(f"אזהרה: {r2_errors} שגיאות בהעלאה ל-R2.")
+    if r2_seen:
+        lines.append(f"הועלו ל-R2: {r2_new_total} קבצים חדשים.")
+        if r2_errors_total:
+            lines.append(f"אזהרה: {r2_errors_total} שגיאות בהעלאה ל-R2.")
     else:
         lines.append("אזהרה: לא נמצא סיכום העלאת קבצים ל-R2.")
 
-    if _INDEX_SKIPPED_RE.search(section):
-        lines.append("בניית האינדקס דולגה (תהליך אינדוקס אחר כבר רץ ברקע) — ייתפס בהרצה שלו.")
-    else:
-        built_m = _INDEX_BUILT_RE.search(section)
-        if built_m:
-            lines.append(f"נוספו לאינדקס: {built_m.group(2)} רשומות חדשות.")
+    if built_total:
+        lines.append(f"נוספו לאינדקס: {built_total} רשומות חדשות.")
+    elif idx_skipped_any:
+        lines.append("בניית האינדקס דולגה בלפחות ריצה אחת (תהליך אינדוקס אחר כבר רץ ברקע) — ייתפס בהרצה שלו.")
 
-    if idx_ok_m:
-        lines.append(f"קובץ האינדקס ({idx_ok_m.group(1)}MB) הועלה ל-R2 בהצלחה — האתר יתעדכן תוך כשעה.")
-    elif idx_fail:
-        lines.append("אזהרה: העלאת קובץ האינדקס ל-R2 נכשלה סופית — האתר לא מעודכן!")
+    if last_idx_ok_m:
+        lines.append(f"קובץ האינדקס ({last_idx_ok_m.group(1)}MB) הועלה ל-R2 בהצלחה — האתר יתעדכן תוך כשעה.")
+    elif idx_fail_any:
+        lines.append("אזהרה: העלאת קובץ האינדקס ל-R2 נכשלה סופית באחת הריצות — ודאו שהאתר מעודכן!")
     else:
         lines.append("אזהרה: לא נמצאה הודעת הצלחה/כישלון להעלאת קובץ האינדקס.")
 
-    success = dl_errors == 0 and (not r2_m or r2_m.group(3) == "0") and not idx_fail
-    status = "תקין: ההורדה היומית הצליחה במלואה." if success else "אזהרה: ההורדה היומית לא הצליחה במלואה — ראו פירוט למטה."
+    success = dl_errors_total == 0 and r2_errors_total == 0 and not idx_fail_any
+    status = "תקין: כל ריצות ההורדה היום הצליחו במלואן." if success else "אזהרה: לא כל ריצות ההורדה היום הצליחו במלואן — ראו פירוט למטה."
     return status + "\n" + "\n".join(lines)
 
 

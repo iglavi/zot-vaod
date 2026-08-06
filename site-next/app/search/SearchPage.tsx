@@ -78,6 +78,34 @@ export default function SearchPage() {
     setForm((f) => ({ ...f, [key]: val }));
   }
 
+  function clearForm() {
+    setForm(emptyForm);
+    setError(null);
+    setDateError(null);
+    setPageCache([]);
+    setPageIndex(0);
+    cursorRef.current = FRESH_CURSOR;
+    router.replace("/search", { scroll: false });
+  }
+
+  function changeSort(nextSort: string) {
+    const nextForm = { ...form, sort: nextSort };
+    setForm(nextForm);
+    startNewSearch(undefined, nextForm);
+  }
+
+  // הודעות-התקדמות מדורגות (D6, Tikunim.txt): כשהחיפוש מתעכב, המשתמש/ת
+  // לא אמור/ה להישאר תקוע/ה על "מחפש בהתאמה למאגר" שניות ארוכות מדי בלי
+  // שום עדכון - גם אם ההודעות האלה לא משקפות במדויק את מה שקורה מול
+  // המאגר, הן שומרות תחושת-התקדמות ומונעות רושם של תקיעה.
+  function startStepTimers(): ReturnType<typeof setTimeout>[] {
+    return [
+      setTimeout(() => setStep("retrieving"), 400),
+      setTimeout(() => setStep("organizing"), 8000),
+      setTimeout(() => setStep("working"), 16000),
+    ];
+  }
+
   async function fetchApiPage(activeForm: typeof form, apiPage: number) {
     const params = new URLSearchParams(
       Object.entries(activeForm).filter(([, v]) => v).map(([k, v]) => [k, v])
@@ -192,7 +220,7 @@ export default function SearchPage() {
 
     setLoading(true);
     setStep("received");
-    const stepTimer = setTimeout(() => setStep("retrieving"), 400);
+    const stepTimers = startStepTimers();
     try {
       const { display, cursor } = await fetchDisplayPage(activeForm, FRESH_CURSOR);
       setPageCache([display]);
@@ -202,7 +230,7 @@ export default function SearchPage() {
     } catch (err: any) {
       setError(errorMessageFor(err));
     } finally {
-      clearTimeout(stepTimer);
+      stepTimers.forEach(clearTimeout);
       setLoading(false);
       setStep(null);
     }
@@ -258,7 +286,7 @@ export default function SearchPage() {
         setLoading(true);
         setError(null);
         setStep("received");
-        const stepTimer = setTimeout(() => setStep("retrieving"), 400);
+        const stepTimers = startStepTimers();
         try {
           const targetDisplayPage = Number.isFinite(urlPage) && urlPage > 0 ? urlPage : 1;
           let cursor = FRESH_CURSOR;
@@ -275,7 +303,7 @@ export default function SearchPage() {
         } catch (err: any) {
           setError(errorMessageFor(err));
         } finally {
-          clearTimeout(stepTimer);
+          stepTimers.forEach(clearTimeout);
           setLoading(false);
           setStep(null);
         }
@@ -290,12 +318,12 @@ export default function SearchPage() {
   return (
     <>
       <Header active="/search" />
-      <main id="main-content" className="container-page py-12">
+      <main id="main-content" className="container-page py-6">
         <form onSubmit={startNewSearch} className="card p-8">
-          <h1 className="text-xl font-semibold text-green-900 mb-6">חיפוש מובנה</h1>
+          <h1 className="text-xl font-semibold text-green-900 mb-4">חיפוש מובנה</h1>
           <div className="grid md:grid-cols-3 gap-5">
             <Field label="שם צד לתיק">
-              <input className="input-field" placeholder="למשל: מקייס" value={form.name}
+              <input className="input-field" value={form.name}
                 onChange={(e) => set("name", e.target.value)} />
             </Field>
             <Field label="מספר תיק">
@@ -303,7 +331,7 @@ export default function SearchPage() {
                 onChange={(e) => set("case_number", e.target.value)} />
             </Field>
             <Field label="שם שופט/ת">
-              <input className="input-field" placeholder="למשל: רוני סלע" value={form.judge}
+              <input className="input-field" value={form.judge}
                 onChange={(e) => set("judge", e.target.value)} />
             </Field>
             <Field label="מתאריך">
@@ -334,51 +362,58 @@ export default function SearchPage() {
               {dateError}
             </p>
           )}
-          <div className="mt-5">
+          <div className="mt-5 grid md:grid-cols-[1fr_auto] gap-5 items-end">
             <Field label="חיפוש חופשי בטקסט">
               <input className="input-field" placeholder="מילים בגוף פסק הדין" value={form.free_text}
                 onChange={(e) => set("free_text", e.target.value)} />
             </Field>
+            <fieldset className="border-0 p-0 m-0">
+              <legend className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</legend>
+              <div className="flex items-center gap-6 text-sm">
+                <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
+                  <input
+                    type="radio"
+                    name="match_mode"
+                    checked={form.match_mode === "exact"}
+                    onChange={() => set("match_mode", "exact")}
+                    className="accent-green-700"
+                  />
+                  התאמה מדויקת
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
+                  <input
+                    type="radio"
+                    name="match_mode"
+                    checked={form.match_mode === "any"}
+                    onChange={() => set("match_mode", "any")}
+                    className="accent-green-700"
+                  />
+                  התאמה חלקית
+                </label>
+              </div>
+            </fieldset>
           </div>
-          <div className="mt-5">
-            <Field label="מיון תוצאות">
-              <select className="input-field" value={form.sort} onChange={(e) => set("sort", e.target.value)}>
-                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </Field>
+          <div className="flex items-center gap-3 mt-6">
+            <button type="submit" disabled={loading} className="btn-primary w-full md:w-auto">
+              {loading ? "מחפש…" : "ביצוע חיפוש במאגר"}
+            </button>
+            <button type="button" onClick={clearForm} className="btn-outline">
+              ניקוי
+            </button>
           </div>
-          <fieldset className="mt-5 border-0 p-0 m-0">
-            <legend className="block text-xs text-muted mb-1.5">סוג ההתאמה לחיפוש החופשי</legend>
-            <div className="flex items-center gap-6 text-sm">
-              <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
-                <input
-                  type="radio"
-                  name="match_mode"
-                  checked={form.match_mode === "exact"}
-                  onChange={() => set("match_mode", "exact")}
-                  className="accent-green-700"
-                />
-                התאמה מדויקת
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
-                <input
-                  type="radio"
-                  name="match_mode"
-                  checked={form.match_mode === "any"}
-                  onChange={() => set("match_mode", "any")}
-                  className="accent-green-700"
-                />
-                התאמה חלקית
-              </label>
-            </div>
-          </fieldset>
-          <button type="submit" disabled={loading} className="btn-primary mt-6 w-full md:w-auto">
-            {loading ? "מחפש…" : "ביצוע חיפוש במאגר"}
-          </button>
           {error && <p role="alert" className="text-sm text-red-600 mt-3">{error}</p>}
           {step && (
             <div className="mt-4">
-              <ThinkingSteps step={step} labels={{ received: "קיבלתי את הבקשה…", retrieving: "מחפש בהתאמה למאגר…" }} order={["received", "retrieving"]} />
+              <ThinkingSteps
+                step={step}
+                labels={{
+                  received: "קיבלתי את הבקשה…",
+                  retrieving: "מחפש בהתאמה למאגר…",
+                  organizing: "מארגן את התוצאות…",
+                  working: "עובד על זה…",
+                }}
+                order={["received", "retrieving", "organizing", "working"]}
+              />
             </div>
           )}
         </form>
@@ -397,15 +432,45 @@ export default function SearchPage() {
               <h2 className="text-sm text-muted">
                 נמצאו {current.capped ? "מעל " : ""}{current.total.toLocaleString("he")} תוצאות
               </h2>
+              {current.groups.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  מיון תוצאות
+                  <select
+                    className="input-field py-1.5"
+                    value={form.sort}
+                    onChange={(e) => changeSort(e.target.value)}
+                  >
+                    {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
             <ul role="list" className="space-y-3 list-none p-0 m-0">
-              {current.groups.map((group) => (
-                <li key={`${group[0].court} ${group[0].case_number}`}>
-                  {group.length > 1 ? <CaseGroupCard items={group} /> : <VerdictCard v={group[0]} />}
+              {current.groups.map((group, i) => (
+                <li key={`${group[0].court} ${group[0].case_number}`} className="flex gap-3">
+                  <span className="text-xs text-muted shrink-0 pt-4 w-6 text-left" aria-hidden="true">
+                    {pageIndex * PER_PAGE + i + 1}.
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    {group.length > 1 ? <CaseGroupCard items={group} /> : <VerdictCard v={group[0]} />}
+                  </div>
                 </li>
               ))}
               {current.groups.length === 0 && (
-                <li className="text-sm text-muted">לא נמצאו תוצאות מתאימות.</li>
+                <li className="text-sm text-ink/80 leading-relaxed">
+                  <p className="font-medium mb-2">לא נמצאו תוצאות.</p>
+                  <p className="mb-1">כמה דברים ששווה לנסות:</p>
+                  <ul className="list-disc pr-5 space-y-1">
+                    <li>מספר תיק — ספרות ומקפים או לוכסן בלבד. כתבו 4934-07-24 או 1690/24.</li>
+                    <li>הורידו מסננים — נסו עם שדה אחד בלבד, בלי טווח תאריכים.</li>
+                    <li>בחיפוש חופשי — עברו להתאמה חלקית.</li>
+                    <li>שמות — נסו רק שם משפחה, או איות אחר.</li>
+                  </ul>
+                  <p className="mt-3 text-xs text-muted">
+                    חשוב לדעת: העדר תוצאות אינו ראיה לכך שאין פסיקה בנושא. ייתכן
+                    שההחלטה לא פורסמה, או שהיא עדיין לא הגיעה אלינו.
+                  </p>
+                </li>
               )}
             </ul>
             {current.groups.length > 0 && (pageIndex > 0 || pageIndex + 1 < pageCache.length || cursorRef.current.hasMore) && (
