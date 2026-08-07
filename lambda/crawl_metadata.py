@@ -32,7 +32,12 @@ DTYPES = ["2"]                         # פסק דין ONLY (1/2/3/4 = החלט�
 # A day we KNOW is heavily populated: an all-courts query for it must return rows.
 # Used as a liveness probe — if THIS comes back empty, the site is blocking us.
 CONTROL_DAY = "23/02/2025"
-OPT_RE = re.compile(r"value='(-?\d+)'\s*>([^<]+)</option>")
+OPT_RE = re.compile(r"value='([^']*)'\s*>([^<]+)</option>")
+# Previously value='(-?\d+)' - numeric-only, which silently matched ZERO
+# options for GetJudgeCB specifically: judge option values are strings like
+# "070058649@GOV.IL", not bare integers. proceeding/case-type/case-interest
+# IDs are numeric so this widened pattern still matches them identically -
+# strictly more permissive, not a behavior change for existing callers.
 _tl = threading.local()
 
 # Cache the control-probe result for a short window instead of re-querying it
